@@ -1,6 +1,7 @@
 # Astrolab
 
-Small, self-contained Python apps for the Astrolab project. Each app lives under `apps/` and can be run directly with `uv`.
+Repository for apps/software/codes that are used in CSF AstroLab projects.
+Each app lives under `apps/` and can be run directly with `uv`.
 
 ## Quick start
 
@@ -8,7 +9,6 @@ Small, self-contained Python apps for the Astrolab project. Each app lives under
 2) From the repo root: `uv sync`
 3) Run the approximation app:
    - `uv run approximation`
-
 
 ## Apps
 
