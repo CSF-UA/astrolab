@@ -136,14 +136,16 @@ def fit_extremum(times: np.ndarray, mags: np.ndarray, order_choice: Union[int, s
     idx_max = int(np.argmax(dense_y))
     dist_min = abs(dense_x[idx_min])
     dist_max = abs(dense_x[idx_max])
+    # Flip selection logic: choose the opposite extremum relative to proximity
+    # (i.e., where we previously chose min, now choose max, and vice versa)
     if dist_min <= dist_max:
-        t0_centered = dense_x[idx_min]
-        kind = "min"
-        y_at_t0 = float(dense_y[idx_min])
-    else:
         t0_centered = dense_x[idx_max]
         kind = "max"
         y_at_t0 = float(dense_y[idx_max])
+    else:
+        t0_centered = dense_x[idx_min]
+        kind = "min"
+        y_at_t0 = float(dense_y[idx_min])
     t0 = float(t0_centered + x_mean)
     return FitResult(
         index=-1,
@@ -206,8 +208,11 @@ def save_results_and_figures(
     target.mkdir(parents=True, exist_ok=True)
     results_path = target / "RESULTS.txt"
     with results_path.open("w") as f:
+        f.write("T0 kind order start end SSE\n")
         for res in results:
-            f.write(f"{res.t0:.10f} {res.kind} order={res.order} interval=({res.interval.start},{res.interval.end}) sse={res.sse:.6f}\n")
+            f.write(
+                f"{res.t0:.10f} {res.kind} {res.order} {res.interval.start} {res.interval.end} {res.sse:.6f}\n"
+            )
     for res in results:
         seg_x = times[res.interval.start : res.interval.end]
         seg_y = mags[res.interval.start : res.interval.end]

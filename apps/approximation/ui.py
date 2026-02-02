@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
+    QSplitter,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -25,6 +27,31 @@ from PySide6.QtWidgets import (
 from . import logic
 from .logic import FitResult, Interval
 from .plot import PlotWidget
+
+
+class ElidedLabel(QLabel):
+    def __init__(self, text: str = "", parent: QWidget | None = None, elide_mode: Qt.TextElideMode = Qt.ElideMiddle) -> None:
+        super().__init__(parent)
+        self._full_text = text
+        self._elide_mode = elide_mode
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setFullText(text)
+
+    def setFullText(self, text: str) -> None:
+        self._full_text = text
+        self._update_elision()
+
+    def fullText(self) -> str:
+        return self._full_text
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_elision()
+
+    def _update_elision(self) -> None:
+        metrics = self.fontMetrics()
+        elided = metrics.elidedText(self._full_text, self._elide_mode, max(0, self.contentsRect().width()))
+        super().setText(elided)
 
 
 class ApproximationWindow(QMainWindow):
@@ -60,12 +87,13 @@ class ApproximationWindow(QMainWindow):
         file_layout = QGridLayout(file_box)
         self.load_lc_btn = QPushButton("Load light curve (.tess)")
         self.load_iv_btn = QPushButton("Load intervals (.txt)")
-        self.light_curve_label = QLabel("No light curve loaded")
-        self.intervals_label = QLabel("No intervals loaded")
+        self.light_curve_label = ElidedLabel("No light curve loaded", self)
+        self.intervals_label = ElidedLabel("No intervals loaded", self)
         file_layout.addWidget(self.load_lc_btn, 0, 0)
         file_layout.addWidget(self.light_curve_label, 0, 1)
         file_layout.addWidget(self.load_iv_btn, 1, 0)
         file_layout.addWidget(self.intervals_label, 1, 1)
+        file_layout.setColumnStretch(1, 1)
 
         order_box = QGroupBox("Polynomial order", self)
         order_layout = QHBoxLayout(order_box)
@@ -111,8 +139,14 @@ class ApproximationWindow(QMainWindow):
         left_layout.addWidget(self.status_label)
         left_layout.addStretch()
 
-        main_layout.addWidget(left_panel, 0)
-        main_layout.addWidget(self.plot, 1)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(left_panel)
+        splitter.addWidget(self.plot)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([380, 920])
+        main_layout.addWidget(splitter)
 
         self.load_lc_btn.clicked.connect(self._load_light_curve)
         self.load_iv_btn.clicked.connect(self._load_intervals)
@@ -143,7 +177,8 @@ class ApproximationWindow(QMainWindow):
             return
         self.times, self.mags = times, mags
         self.light_curve_path = Path(path)
-        self.light_curve_label.setText(self.light_curve_path.name)
+        self.light_curve_label.setFullText(self.light_curve_path.name)
+        self.light_curve_label.setToolTip(str(self.light_curve_path))
         try:
             self.plot.set_light_curve(self.times, self.mags)
             self.plot.set_intervals(self.times, self.mags, self.intervals)
@@ -168,7 +203,8 @@ class ApproximationWindow(QMainWindow):
             return
         self.intervals = intervals
         self.intervals_path = Path(path)
-        self.intervals_label.setText(self.intervals_path.name)
+        self.intervals_label.setFullText(self.intervals_path.name)
+        self.intervals_label.setToolTip(str(self.intervals_path))
         if self.times is not None and self.mags is not None:
             try:
                 self.plot.set_intervals(self.times, self.mags, self.intervals)
