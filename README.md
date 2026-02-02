@@ -7,8 +7,8 @@ Small, self-contained Python apps for the Astrolab project. Each app lives under
 1) Install uv (if not already): see https://docs.astral.sh/uv/
 2) From the repo root: `uv sync`
 3) Run the approximation app:
-   - Preferred: `uv run approximation`
-   - Also works: `uv run python -m apps.approximation.main`
+   - `uv run approximation`
+
 
 ## Apps
 
