@@ -206,8 +206,12 @@ def save_results_and_figures(
     target.mkdir(parents=True, exist_ok=True)
     results_path = target / "RESULTS.txt"
     with results_path.open("w") as f:
+        # Header makes downstream parsing easier and keeps values in fixed columns
+        f.write("t0 kind order start end sse\n")
         for res in results:
-            f.write(f"{res.t0:.10f} {res.kind} order={res.order} interval=({res.interval.start},{res.interval.end}) sse={res.sse:.6f}\n")
+            f.write(
+                f"{res.t0:.10f} {res.kind} {res.order} {res.interval.start} {res.interval.end} {res.sse:.6f}\n"
+            )
     for res in results:
         seg_x = times[res.interval.start : res.interval.end]
         seg_y = mags[res.interval.start : res.interval.end]
