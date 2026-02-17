@@ -52,8 +52,8 @@ class PlotWidget(QWidget):
         self.interval_lines: list[visuals.Line] = []  # kept for compatibility; we no longer draw connecting lines
         self.selected_region = visuals.Rectangle(
             center=(0.0, 0.0),
-            width=0.0,
-            height=0.0,
+            width=1.0,
+            height=1.0,
             color=(0.6, 0.6, 0.6, 0.15),
             border_color=(0.4, 0.4, 0.4, 0.4),
             parent=self.view.scene,
