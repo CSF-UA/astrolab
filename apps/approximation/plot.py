@@ -66,6 +66,7 @@ class PlotWidget(QWidget):
         self.fit_lines: list[visuals.Line] = []
 
         self.y_limits = (0.0, 1.0)
+        self.default_rect: tuple[float, float, float, float] | None = None
         self.times: np.ndarray | None = None
         self.mags: np.ndarray | None = None
         self.interval_colors = [
@@ -103,8 +104,31 @@ class PlotWidget(QWidget):
         x_min = float(times.min()) - pad_x
         x_max = float(times.max()) + pad_x
         y_min, y_max = self.y_limits
-        self.view.camera.rect = (x_min, y_min, x_max - x_min, y_max - y_min)
+        self.default_rect = (x_min, y_min, x_max - x_min, y_max - y_min)
+        self.view.camera.rect = self.default_rect
         self.canvas.update()
+
+    def set_zoom_factors(self, x_zoom: float = 1.0, y_zoom: float = 1.0) -> None:
+        if self.default_rect is None:
+            return
+        rect = self.view.camera.rect
+        center_x = float(rect.left + rect.width / 2.0)
+        center_y = float(rect.bottom + rect.height / 2.0)
+        default_x, default_y, default_w, default_h = self.default_rect
+        if not np.isfinite(center_x) or not np.isfinite(center_y):
+            center_x = default_x + default_w / 2.0
+            center_y = default_y + default_h / 2.0
+        x_zoom = max(float(x_zoom), 1e-6)
+        y_zoom = max(float(y_zoom), 1e-6)
+        width = max(default_w / x_zoom, 1e-9)
+        height = max(default_h / y_zoom, 1e-9)
+        self.view.camera.rect = (center_x - width / 2.0, center_y - height / 2.0, width, height)
+        self.canvas.update()
+
+    def reset_view(self) -> None:
+        if self.default_rect is not None:
+            self.view.camera.rect = self.default_rect
+            self.canvas.update()
 
     def set_intervals(self, times: np.ndarray, mags: np.ndarray, intervals: list[Interval]) -> None:
         # we no longer draw connecting lines; only recolor points by interval

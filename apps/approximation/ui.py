@@ -8,6 +8,7 @@ import traceback
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
+    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSlider,
     QSizePolicy,
     QSplitter,
     QSpinBox,
@@ -122,6 +124,49 @@ class ApproximationWindow(QMainWindow):
         action_layout.addWidget(self.clear_btn, 2, 0)
         action_layout.addWidget(self.save_btn, 2, 1)
 
+        view_box = QGroupBox("View controls", self)
+        view_layout = QGridLayout(view_box)
+        self.x_zoom_value = QDoubleSpinBox(self)
+        self.x_zoom_value.setRange(0.2, 5.0)
+        self.x_zoom_value.setSingleStep(0.1)
+        self.x_zoom_value.setDecimals(2)
+        self.x_zoom_value.setValue(1.0)
+        self.x_zoom_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.x_zoom_slider.setRange(20, 500)
+        self.x_zoom_slider.setSingleStep(5)
+        self.x_zoom_slider.setPageStep(10)
+        self.x_zoom_slider.setValue(100)
+        self.x_zoom_plus_btn = QPushButton("+")
+        self.x_zoom_minus_btn = QPushButton("-")
+
+        self.y_zoom_value = QDoubleSpinBox(self)
+        self.y_zoom_value.setRange(0.2, 5.0)
+        self.y_zoom_value.setSingleStep(0.1)
+        self.y_zoom_value.setDecimals(2)
+        self.y_zoom_value.setValue(1.0)
+        self.y_zoom_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.y_zoom_slider.setRange(20, 500)
+        self.y_zoom_slider.setSingleStep(5)
+        self.y_zoom_slider.setPageStep(10)
+        self.y_zoom_slider.setValue(100)
+        self.y_zoom_plus_btn = QPushButton("+")
+        self.y_zoom_minus_btn = QPushButton("-")
+
+        self.reset_view_btn = QPushButton("Reset view")
+
+        view_layout.addWidget(QLabel("X:"), 0, 0)
+        view_layout.addWidget(self.x_zoom_value, 0, 1)
+        view_layout.addWidget(self.x_zoom_slider, 1, 0, 1, 2)
+        view_layout.addWidget(self.x_zoom_plus_btn, 2, 0)
+        view_layout.addWidget(self.x_zoom_minus_btn, 2, 1)
+
+        view_layout.addWidget(QLabel("Y:"), 3, 0)
+        view_layout.addWidget(self.y_zoom_value, 3, 1)
+        view_layout.addWidget(self.y_zoom_slider, 4, 0, 1, 2)
+        view_layout.addWidget(self.y_zoom_plus_btn, 5, 0)
+        view_layout.addWidget(self.y_zoom_minus_btn, 5, 1)
+        view_layout.addWidget(self.reset_view_btn, 6, 0, 1, 2)
+
         self.table = QTableWidget(0, 7, self)
         self.table.setHorizontalHeaderLabels(["#", "Start", "End", "Order", "T0", "Type", "SSE"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -135,6 +180,7 @@ class ApproximationWindow(QMainWindow):
         left_layout.addWidget(file_box)
         left_layout.addWidget(order_box)
         left_layout.addWidget(action_box)
+        left_layout.addWidget(view_box)
         left_layout.addWidget(self.table, 1)
         left_layout.addWidget(self.status_label)
         left_layout.addStretch()
@@ -156,10 +202,83 @@ class ApproximationWindow(QMainWindow):
         self.delete_btn.clicked.connect(self._delete_selected)
         self.clear_btn.clicked.connect(self._clear_results)
         self.save_btn.clicked.connect(self._save_outputs)
+        self.x_zoom_slider.valueChanged.connect(self._x_zoom_slider_changed)
+        self.y_zoom_slider.valueChanged.connect(self._y_zoom_slider_changed)
+        self.x_zoom_value.valueChanged.connect(self._x_zoom_spin_changed)
+        self.y_zoom_value.valueChanged.connect(self._y_zoom_spin_changed)
+        self.x_zoom_plus_btn.clicked.connect(self._x_zoom_in)
+        self.x_zoom_minus_btn.clicked.connect(self._x_zoom_out)
+        self.y_zoom_plus_btn.clicked.connect(self._y_zoom_in)
+        self.y_zoom_minus_btn.clicked.connect(self._y_zoom_out)
+        self.reset_view_btn.clicked.connect(self.plot.reset_view)
+        self.reset_view_btn.clicked.connect(self._reset_zoom_controls)
         self.table.itemSelectionChanged.connect(self._highlight_selected_interval)
 
     def _toggle_order_mode(self, checked: bool) -> None:
         self.order_spinner.setEnabled(not checked)
+
+    @staticmethod
+    def _zoom_slider_to_value(slider_value: int) -> float:
+        return slider_value / 100.0
+
+    @staticmethod
+    def _zoom_value_to_slider(zoom_value: float) -> int:
+        return int(round(zoom_value * 100.0))
+
+    def _apply_zoom_controls(self) -> None:
+        self.plot.set_zoom_factors(float(self.x_zoom_value.value()), float(self.y_zoom_value.value()))
+
+    def _x_zoom_slider_changed(self, slider_value: int) -> None:
+        zoom_value = self._zoom_slider_to_value(slider_value)
+        self.x_zoom_value.blockSignals(True)
+        self.x_zoom_value.setValue(zoom_value)
+        self.x_zoom_value.blockSignals(False)
+        self._apply_zoom_controls()
+
+    def _y_zoom_slider_changed(self, slider_value: int) -> None:
+        zoom_value = self._zoom_slider_to_value(slider_value)
+        self.y_zoom_value.blockSignals(True)
+        self.y_zoom_value.setValue(zoom_value)
+        self.y_zoom_value.blockSignals(False)
+        self._apply_zoom_controls()
+
+    def _x_zoom_spin_changed(self, zoom_value: float) -> None:
+        self.x_zoom_slider.blockSignals(True)
+        self.x_zoom_slider.setValue(self._zoom_value_to_slider(float(zoom_value)))
+        self.x_zoom_slider.blockSignals(False)
+        self._apply_zoom_controls()
+
+    def _y_zoom_spin_changed(self, zoom_value: float) -> None:
+        self.y_zoom_slider.blockSignals(True)
+        self.y_zoom_slider.setValue(self._zoom_value_to_slider(float(zoom_value)))
+        self.y_zoom_slider.blockSignals(False)
+        self._apply_zoom_controls()
+
+    def _x_zoom_in(self) -> None:
+        self.x_zoom_value.setValue(min(self.x_zoom_value.value() + self.x_zoom_value.singleStep(), self.x_zoom_value.maximum()))
+
+    def _x_zoom_out(self) -> None:
+        self.x_zoom_value.setValue(max(self.x_zoom_value.value() - self.x_zoom_value.singleStep(), self.x_zoom_value.minimum()))
+
+    def _y_zoom_in(self) -> None:
+        self.y_zoom_value.setValue(min(self.y_zoom_value.value() + self.y_zoom_value.singleStep(), self.y_zoom_value.maximum()))
+
+    def _y_zoom_out(self) -> None:
+        self.y_zoom_value.setValue(max(self.y_zoom_value.value() - self.y_zoom_value.singleStep(), self.y_zoom_value.minimum()))
+
+    def _reset_zoom_controls(self) -> None:
+        self.x_zoom_value.blockSignals(True)
+        self.y_zoom_value.blockSignals(True)
+        self.x_zoom_slider.blockSignals(True)
+        self.y_zoom_slider.blockSignals(True)
+        self.x_zoom_value.setValue(1.0)
+        self.y_zoom_value.setValue(1.0)
+        self.x_zoom_slider.setValue(100)
+        self.y_zoom_slider.setValue(100)
+        self.x_zoom_value.blockSignals(False)
+        self.y_zoom_value.blockSignals(False)
+        self.x_zoom_slider.blockSignals(False)
+        self.y_zoom_slider.blockSignals(False)
 
     def _current_order_choice(self) -> Union[int, str]:
         if self.order_auto_btn.isChecked():
@@ -182,6 +301,7 @@ class ApproximationWindow(QMainWindow):
         try:
             self.plot.set_light_curve(self.times, self.mags)
             self.plot.set_intervals(self.times, self.mags, self.intervals)
+            self._reset_zoom_controls()
         except Exception:
             QMessageBox.critical(self, "Plot error", traceback.format_exc())
             return
