@@ -138,11 +138,12 @@ def fit_extremum(times: np.ndarray, mags: np.ndarray, order_choice: Union[int, s
     dist_max = abs(dense_x[idx_max])
     if dist_min <= dist_max:
         t0_centered = dense_x[idx_min]
-        kind = "min"
+        # Magnitude is displayed on an inverted axis, so labels are swapped.
+        kind = "max"
         y_at_t0 = float(dense_y[idx_min])
     else:
         t0_centered = dense_x[idx_max]
-        kind = "max"
+        kind = "min"
         y_at_t0 = float(dense_y[idx_max])
     t0 = float(t0_centered + x_mean)
     return FitResult(
