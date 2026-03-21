@@ -3,13 +3,14 @@ name = "astrolab"
 version = "0.1.0"
 description = "A laconic collection of small astronomy tools (multi-app) managed with uv."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "numpy>=1.26",
     "matplotlib>=3.8",
     "lightkurve>=2.5",
     "vispy>=0.13",
-    "pyside6>=6.7"
+    "pyside6>=6.7",
+    "scipy>=1.17.1",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,10 @@ dev = ["ruff>=0.5"]
 approximation = "apps.approximation.main:main"
 # Allows: uv run period
 period = "apps.period.main:main"
+# Allows: uv run oc_curve
+oc_curve = "apps.oc_curve.main:main"
+# Allows: uv run maxima_params
+maxima_params = "apps.maxima_params.main:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -8,6 +8,7 @@ vispy_app.use_app("pyside6")
 from vispy import scene
 from vispy.scene import visuals
 
+from . import logic
 from .logic import FitResult, Interval
 
 
@@ -87,12 +88,11 @@ class PlotWidget(QWidget):
     def set_light_curve(self, times: np.ndarray, mags: np.ndarray) -> None:
         if len(times) == 0:
             return
-        inv_mags = -mags
-        pos = np.column_stack((times, inv_mags)).astype(np.float32, copy=False)
+        pos = np.column_stack((times, mags)).astype(np.float32, copy=False)
         self.times = times
         self.mags = mags
         self.light_curve.set_data(pos, face_color=(0.1, 0.1, 0.1, 0.95), edge_color=None, size=6)
-        ymin, ymax = float(np.min(inv_mags)), float(np.max(inv_mags))
+        ymin, ymax = float(np.min(mags)), float(np.max(mags))
         if ymin == ymax:
             ymin -= 1.0
             ymax += 1.0
@@ -100,7 +100,10 @@ class PlotWidget(QWidget):
         span_y = float(ymax - ymin)
         pad_x = span_x * 0.02 if span_x > 0 else 1.0
         pad_y = span_y * 0.05 if span_y > 0 else 1.0
-        self.y_limits = (ymin - pad_y, ymax + pad_y)
+        # For astronomy, we want smaller magnitudes at the top.
+        # In VisPy camera rect, (x, y, w, h), y is the "bottom" coordinate.
+        # So we set y=ymax and h=ymin-ymax to flip it.
+        self.y_limits = (ymax + pad_y, ymin - pad_y)
         x_min = float(times.min()) - pad_x
         x_max = float(times.max()) + pad_x
         y_min, y_max = self.y_limits
@@ -144,8 +147,7 @@ class PlotWidget(QWidget):
             c = self.interval_colors[idx % len(self.interval_colors)]
             colors[iv.start : iv.end] = c
         if self.times is not None and self.mags is not None:
-            inv_mags = -self.mags
-            pos = np.column_stack((self.times, inv_mags)).astype(np.float32, copy=False)
+            pos = np.column_stack((self.times, self.mags)).astype(np.float32, copy=False)
             self.light_curve.set_data(pos, face_color=colors, edge_color=None, size=6)
         self.canvas.update()
 
@@ -158,7 +160,7 @@ class PlotWidget(QWidget):
             self.extrema_lines.set_data(np.empty((0, 2)))
             self.canvas.update()
             return
-        points = np.array([[res.t0, -res.y_at_t0] for res in results], dtype=np.float32)
+        points = np.array([[res.t0, res.y_at_t0] for res in results], dtype=np.float32)
         self.extrema_markers.set_data(points, edge_color=(0.8, 0.2, 0.2, 1), face_color=(0.95, 0.75, 0.75, 0.9), size=8)
         lines = []
         ymin, ymax = self.y_limits
@@ -172,9 +174,14 @@ class PlotWidget(QWidget):
             for res in results:
                 seg_x = self.times[res.interval.start : res.interval.end]
                 dense_x = np.linspace(seg_x.min(), seg_x.max(), 600, dtype=np.float32)
-                dense_x_centered = dense_x - res.x_mean
-                dense_y = np.polyval(res.coefficients, dense_x_centered)
-                dense_y = -dense_y
+                if res.method == "exp":
+                    fit_y = logic.exponential_model(dense_x, *res.coefficients)
+                elif res.method == "brat":
+                    fit_y = logic.brat_model(dense_x, *res.coefficients)
+                else:
+                    fit_x_centered = dense_x - res.x_mean
+                    fit_y = np.polyval(res.coefficients, fit_x_centered)
+                dense_y = fit_y
                 color_idx = res.index % len(self.interval_colors)
                 ln = visuals.Line(
                     np.column_stack((dense_x, dense_y)).astype(np.float32, copy=False),
@@ -193,7 +200,7 @@ class PlotWidget(QWidget):
             self.selected_region.visible = False
             return
         seg_x = times[interval.start : interval.end]
-        seg_y = -mags[interval.start : interval.end]
+        seg_y = mags[interval.start : interval.end]
         if len(seg_x) == 0:
             self.canvas.update()
             return

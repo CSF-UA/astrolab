@@ -9,6 +9,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
     QDoubleSpinBox,
+    QComboBox,
+    QCheckBox,
+    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -97,8 +100,15 @@ class ApproximationWindow(QMainWindow):
         file_layout.addWidget(self.intervals_label, 1, 1)
         file_layout.setColumnStretch(1, 1)
 
-        order_box = QGroupBox("Polynomial order", self)
-        order_layout = QHBoxLayout(order_box)
+        settings_box = QGroupBox("Approximation settings", self)
+        settings_layout = QVBoxLayout(settings_box)
+        self.method_combo = QComboBox()
+        self.method_combo.addItems(["Polynomial", "Exponential", "Brat+"])
+        settings_layout.addWidget(self.method_combo)
+
+        self.poly_settings = QWidget()
+        poly_layout = QHBoxLayout(self.poly_settings)
+        poly_layout.setContentsMargins(0, 0, 0, 0)
         self.order_auto_btn = QPushButton("Auto 3–10")
         self.order_auto_btn.setCheckable(True)
         self.order_auto_btn.setChecked(True)
@@ -106,10 +116,90 @@ class ApproximationWindow(QMainWindow):
         self.order_spinner.setRange(3, 10)
         self.order_spinner.setValue(5)
         self.order_spinner.setEnabled(False)
-        order_layout.addWidget(self.order_auto_btn)
-        order_layout.addWidget(QLabel("or fixed"))
-        order_layout.addWidget(self.order_spinner)
-        order_layout.addStretch()
+        poly_layout.addWidget(self.order_auto_btn)
+        poly_layout.addWidget(QLabel("or fixed"))
+        poly_layout.addWidget(self.order_spinner)
+        settings_layout.addWidget(self.poly_settings)
+
+        self.exp_settings = QWidget()
+        self.exp_settings.setVisible(False)
+        exp_layout = QFormLayout(self.exp_settings)
+        exp_layout.setContentsMargins(0, 5, 0, 0)
+
+        self.exp_a_auto = QCheckBox("Auto A")
+        self.exp_a_auto.setChecked(True)
+        self.exp_a_val = QDoubleSpinBox()
+        self.exp_a_val.setRange(-10000, 10000)
+        self.exp_a_val.setEnabled(False)
+
+        self.exp_b_val = QDoubleSpinBox()
+        self.exp_b_val.setRange(0.001, 1000)
+        self.exp_b_val.setValue(2.0)
+
+        self.exp_c_auto = QCheckBox("Auto C")
+        self.exp_c_auto.setChecked(True)
+        self.exp_c_val = QDoubleSpinBox()
+        self.exp_c_val.setRange(-1e12, 1e12)
+        self.exp_c_val.setDecimals(6)
+        self.exp_c_val.setEnabled(False)
+
+        self.exp_d_val = QDoubleSpinBox()
+        self.exp_d_val.setRange(0.001, 100)
+        self.exp_d_val.setValue(0.5)
+
+        self.exp_f_auto = QCheckBox("Auto F")
+        self.exp_f_auto.setChecked(True)
+        self.exp_f_val = QDoubleSpinBox()
+        self.exp_f_val.setRange(-10000, 10000)
+        self.exp_f_val.setEnabled(False)
+
+        exp_layout.addRow(self.exp_a_auto, self.exp_a_val)
+        exp_layout.addRow("B (width):", self.exp_b_val)
+        exp_layout.addRow(self.exp_c_auto, self.exp_c_val)
+        exp_layout.addRow("D (shape):", self.exp_d_val)
+        exp_layout.addRow(self.exp_f_auto, self.exp_f_val)
+        settings_layout.addWidget(self.exp_settings)
+
+        self.brat_settings = QWidget()
+        self.brat_settings.setVisible(False)
+        brat_layout = QFormLayout(self.brat_settings)
+        brat_layout.setContentsMargins(0, 5, 0, 0)
+
+        self.brat_c0_auto = QCheckBox("Auto c0 (baseline)")
+        self.brat_c0_auto.setChecked(True)
+        self.brat_c0_val = QDoubleSpinBox()
+        self.brat_c0_val.setRange(-10000, 10000)
+        self.brat_c0_val.setEnabled(False)
+
+        self.brat_c1_auto = QCheckBox("Auto c1 (depth)")
+        self.brat_c1_auto.setChecked(True)
+        self.brat_c1_val = QDoubleSpinBox()
+        self.brat_c1_val.setRange(-10000, 10000)
+        self.brat_c1_val.setEnabled(False)
+
+        self.brat_t0_auto = QCheckBox("Auto t0 (center)")
+        self.brat_t0_auto.setChecked(True)
+        self.brat_t0_val = QDoubleSpinBox()
+        self.brat_t0_val.setRange(-1e12, 1e12)
+        self.brat_t0_val.setDecimals(6)
+        self.brat_t0_val.setEnabled(False)
+
+        self.brat_d_auto = QCheckBox("Auto d (width)")
+        self.brat_d_auto.setChecked(True)
+        self.brat_d_val = QDoubleSpinBox()
+        self.brat_d_val.setRange(0.001, 1000)
+        self.brat_d_val.setEnabled(False)
+
+        self.brat_gamma_val = QDoubleSpinBox()
+        self.brat_gamma_val.setRange(1e-6, 100)
+        self.brat_gamma_val.setValue(1.0)
+
+        brat_layout.addRow(self.brat_c0_auto, self.brat_c0_val)
+        brat_layout.addRow(self.brat_c1_auto, self.brat_c1_val)
+        brat_layout.addRow(self.brat_t0_auto, self.brat_t0_val)
+        brat_layout.addRow(self.brat_d_auto, self.brat_d_val)
+        brat_layout.addRow("Gamma (shape):", self.brat_gamma_val)
+        settings_layout.addWidget(self.brat_settings)
 
         action_box = QGroupBox("Actions", self)
         action_layout = QGridLayout(action_box)
@@ -167,8 +257,8 @@ class ApproximationWindow(QMainWindow):
         view_layout.addWidget(self.y_zoom_minus_btn, 5, 1)
         view_layout.addWidget(self.reset_view_btn, 6, 0, 1, 2)
 
-        self.table = QTableWidget(0, 7, self)
-        self.table.setHorizontalHeaderLabels(["#", "Start", "End", "Order", "T0", "Type", "SSE"])
+        self.table = QTableWidget(0, 8, self)
+        self.table.setHorizontalHeaderLabels(["#", "Start", "End", "Order", "T0", "Type", "SSE", "Method"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -178,7 +268,7 @@ class ApproximationWindow(QMainWindow):
         self.status_label.setWordWrap(True)
 
         left_layout.addWidget(file_box)
-        left_layout.addWidget(order_box)
+        left_layout.addWidget(settings_box)
         left_layout.addWidget(action_box)
         left_layout.addWidget(view_box)
         left_layout.addWidget(self.table, 1)
@@ -196,7 +286,15 @@ class ApproximationWindow(QMainWindow):
 
         self.load_lc_btn.clicked.connect(self._load_light_curve)
         self.load_iv_btn.clicked.connect(self._load_intervals)
+        self.method_combo.currentIndexChanged.connect(self._on_method_changed)
         self.order_auto_btn.toggled.connect(self._toggle_order_mode)
+        self.exp_a_auto.toggled.connect(lambda c: self.exp_a_val.setEnabled(not c))
+        self.exp_c_auto.toggled.connect(lambda c: self.exp_c_val.setEnabled(not c))
+        self.exp_f_auto.toggled.connect(lambda c: self.exp_f_val.setEnabled(not c))
+        self.brat_c0_auto.toggled.connect(lambda c: self.brat_c0_val.setEnabled(not c))
+        self.brat_c1_auto.toggled.connect(lambda c: self.brat_c1_val.setEnabled(not c))
+        self.brat_t0_auto.toggled.connect(lambda c: self.brat_t0_val.setEnabled(not c))
+        self.brat_d_auto.toggled.connect(lambda c: self.brat_d_val.setEnabled(not c))
         self.approx_btn.clicked.connect(self._run_approximation)
         self.reapprox_btn.clicked.connect(self._reapprox_selected)
         self.delete_btn.clicked.connect(self._delete_selected)
@@ -216,6 +314,11 @@ class ApproximationWindow(QMainWindow):
 
     def _toggle_order_mode(self, checked: bool) -> None:
         self.order_spinner.setEnabled(not checked)
+
+    def _on_method_changed(self, index: int) -> None:
+        self.poly_settings.setVisible(index == 0)
+        self.exp_settings.setVisible(index == 1)
+        self.brat_settings.setVisible(index == 2)
 
     @staticmethod
     def _zoom_slider_to_value(slider_value: int) -> float:
@@ -280,10 +383,32 @@ class ApproximationWindow(QMainWindow):
         self.x_zoom_slider.blockSignals(False)
         self.y_zoom_slider.blockSignals(False)
 
-    def _current_order_choice(self) -> Union[int, str]:
-        if self.order_auto_btn.isChecked():
-            return "auto"
-        return int(self.order_spinner.value())
+    def _current_order_choice(self) -> Union[int, str, dict]:
+        idx = self.method_combo.currentIndex()
+        if idx == 1:
+            params = logic.ExpParams(
+                a=None if self.exp_a_auto.isChecked() else float(self.exp_a_val.value()),
+                b=float(self.exp_b_val.value()),
+                c=None if self.exp_c_auto.isChecked() else float(self.exp_c_val.value()),
+                d=float(self.exp_d_val.value()),
+                f=None if self.exp_f_auto.isChecked() else float(self.exp_f_val.value()),
+            )
+            return {"method": "exponential", "params": params}
+        
+        if idx == 2:
+            params = logic.BratParams(
+                c0=None if self.brat_c0_auto.isChecked() else float(self.brat_c0_val.value()),
+                c1=None if self.brat_c1_auto.isChecked() else float(self.brat_c1_val.value()),
+                t0=None if self.brat_t0_auto.isChecked() else float(self.brat_t0_val.value()),
+                d=None if self.brat_d_auto.isChecked() else float(self.brat_d_val.value()),
+                gamma=float(self.brat_gamma_val.value()),
+            )
+            return {"method": "brat", "params": params}
+
+        order = "auto"
+        if not self.order_auto_btn.isChecked():
+            order = int(self.order_spinner.value())
+        return {"method": "polynomial", "order": order}
 
     def _load_light_curve(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select light curve (.tess)", "", "TESS files (*.tess);;All files (*.*)")
