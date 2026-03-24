@@ -98,7 +98,7 @@ def _print_results(result: AnalysisResult) -> None:
     if not result.oconnell:
         print("  Not enough consecutive maxima to compute O'Connell effect.")
     else:
-        print(f"  {'Pair':>6}  {'T0_max1':>16}  {'T0_max2':>16}  {'m_max1':>10}  {'m_max2':>10}  {'Δm':>10}")
+        print(f"  {'Pair':>6}  {'JD_max1':>16}  {'JD_max2':>16}  {'m_max1':>10}  {'m_max2':>10}  {'Δm':>10}")
         print(f"  {'----':>6}  {'---':>16}  {'---':>16}  {'---':>10}  {'---':>10}  {'---':>10}")
         for oc in result.oconnell:
             pair_str = f"{oc.max1_index + 1}-{oc.max2_index + 1}"
@@ -153,7 +153,7 @@ def main() -> None:
 
     # Ask for period T0
     try:
-        T0_input = input("Enter the orbital period T0 (days): ").strip()
+        T0_input = input("Enter the orbital period P (days): ").strip()
         T0 = float(T0_input)
     except (ValueError, EOFError):
         print("Invalid period. Exiting.", file=sys.stderr)
@@ -163,7 +163,7 @@ def main() -> None:
         print("Period must be positive. Exiting.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\nRunning analysis with T0 = {T0:.8f} days ...")
+    print(f"\nRunning analysis with P = {T0:.8f} days ...")
     result = analyze_maxima(
         times, mags, T0,
         interval_starts=interval_starts,
