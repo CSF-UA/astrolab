@@ -101,7 +101,12 @@ def fit_oc_curve(time: np.ndarray, oc: np.ndarray) -> OCFitResult:
     Steps:
         1. Linear detrending via polyfit.
         2. Lomb-Scargle periodogram on the residuals for initial period guess.
-        3. Levenberg-Marquardt curve_fit for all 5 parameters.
+        3. Multi-start Levenberg-Marquardt curve_fit for all 5 parameters,
+           selecting the solution with the lowest RMS residual.
+
+    The frequency range extends to periods up to 5× the data span so that
+    partial sinusoidal signals (period longer than the observation window)
+    can be detected.
     """
     # 1. Linear trend for initial guess
     trend_coeffs = np.polyfit(time, oc, 1)  # [slope, intercept]
@@ -112,7 +117,7 @@ def fit_oc_curve(time: np.ndarray, oc: np.ndarray) -> OCFitResult:
     #    - Build a frequency grid from the data span
     dt = time[-1] - time[0]
     n_pts = len(time)
-    freq_min = 1.0 / dt
+    freq_min = 1.0 / (5.0 * dt)   # allow periods up to 5× the data span
     freq_max = n_pts / (2.0 * dt)  # Nyquist-like upper bound
     n_freqs = max(1000, 5 * n_pts)
     freqs = np.linspace(freq_min, freq_max, n_freqs)
@@ -122,26 +127,40 @@ def fit_oc_curve(time: np.ndarray, oc: np.ndarray) -> OCFitResult:
     oc_zero_mean = oc_detrended - np.mean(oc_detrended)
     power = lombscargle(time, oc_zero_mean, angular_freqs, normalize=True)
 
-    best_freq = freqs[np.argmax(power)]
-    guess_period = 1.0 / best_freq
+    # Collect candidate periods: top 3 Lomb-Scargle peaks + long-period guesses
+    top_indices = np.argsort(power)[-3:][::-1]
+    candidate_periods = [1.0 / freqs[i] for i in top_indices]
+    candidate_periods += [2.0 * dt, 3.0 * dt]
 
     # Guess amplitude from the detrended data
     guess_amplitude = (np.max(oc_detrended) - np.min(oc_detrended)) / 2.0
 
-    # Initial guesses: [c0 (intercept), c1 (slope), amplitude, period, phase]
-    initial_guesses = [trend_coeffs[1], trend_coeffs[0],
-                       guess_amplitude, guess_period, 0.0]
+    # 3. Multi-start curve fitting — try each candidate period,
+    #    keep the solution with the lowest RMS residual.
+    best_rms = np.inf
+    best_popt: np.ndarray | None = None
 
-    # 3. Curve fitting
-    try:
-        popt, _ = curve_fit(
-            oc_model, time, oc, p0=initial_guesses,
-            maxfev=50000,
-        )
-    except RuntimeError as e:
-        raise OCDataError(f"Curve fitting failed to converge: {e}")
+    for p0 in candidate_periods:
+        initial = [trend_coeffs[1], trend_coeffs[0],
+                   guess_amplitude, p0, 0.0]
+        try:
+            popt, _ = curve_fit(
+                oc_model, time, oc, p0=initial,
+                maxfev=50000,
+            )
+            oc_fitted = oc_model(time, *popt)
+            rms = float(np.sqrt(np.mean((oc - oc_fitted) ** 2)))
+            if rms < best_rms:
+                best_rms = rms
+                best_popt = popt
+        except RuntimeError:
+            continue
 
-    c0_opt, c1_opt, amplitude_opt, period_opt, phase_opt = popt
+    if best_popt is None:
+        raise OCDataError("Curve fitting failed to converge for all "
+                          "candidate initial periods.")
+
+    c0_opt, c1_opt, amplitude_opt, period_opt, phase_opt = best_popt
 
     # Normalize: ensure amplitude is positive
     if amplitude_opt < 0:
