@@ -79,7 +79,7 @@ def _print_results(result: AnalysisResult) -> None:
     """Pretty-print analysis results to stdout."""
     print()
     print("=" * 64)
-    print("  RE-RADIATION PARAMETERS  (Δm_refl = m_start − m_end)")
+    print("  Reflection effect  (Δm_refl = m_start − m_end)")
     print("=" * 64)
     if not result.maxima:
         print("  No maxima found.")

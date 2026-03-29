@@ -76,28 +76,66 @@ def main() -> None:
 
     print(f"Loaded {len(time)} data points (epochs {time[0]:.3f} – {time[-1]:.3f})")
 
+    # Compute default period bounds so the user can see them
+    delta_e = time[-1] - time[0]
+    default_p_min = 100.0
+    default_p_max = 3.0 * delta_e
+
+    # Prompt for optional period bounds
+    raw_min = input(
+        f"  Period lower bound [default: {default_p_min:.1f}]: "
+    ).strip()
+    raw_max = input(
+        f"  Period upper bound [default: {default_p_max:.1f}]: "
+    ).strip()
+
+    period_min = float(raw_min) if raw_min else None
+    period_max = float(raw_max) if raw_max else None
+
     try:
-        result = fit_oc_curve(time, oc)
+        result = fit_oc_curve(time, oc,
+                              period_min=period_min,
+                              period_max=period_max)
     except OCDataError as e:
         print(f"Error during fitting: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Print results
     print()
-    print("=" * 48)
-    print("  Determined Sinusoidal Parameters")
-    print("=" * 48)
+    print("=" * 52)
+    print("  Fitted Parameters")
+    print("=" * 52)
     print(f"  Period (P₂):    {result.period:.5f}")
     print(f"  Amplitude (R):  {result.amplitude:.8f}")
-    print(f"  Phase:          {result.phase:.5f} rad")
+    print(f"  Phase (φ):      {result.phase:.5f} rad")
     print(f"  Linear C₀:     {result.c0:.10f}")
     print(f"  Linear C₁:     {result.c1:.10e}")
-    print("=" * 48)
+    print(f"  RMS residual:   {result.rms:.8f}")
+    print("-" * 52)
 
-    # Residuals
-    residuals = result.oc - result.oc_fitted
-    rms = np.sqrt(np.mean(residuals**2))
-    print(f"  RMS residual:   {rms:.8f}")
+    # Parameter uncertainties
+    if result.param_errors is not None and not np.all(np.isinf(result.param_errors)):
+        errs = result.param_errors
+        print("  Parameter uncertainties (σ):")
+        print(f"    σ(C₀):       {errs[0]:.10e}")
+        print(f"    σ(C₁):       {errs[1]:.10e}")
+        print(f"    σ(R):         {errs[2]:.10e}")
+        print(f"    σ(P₂):       {errs[3]:.5f}")
+        print(f"    σ(φ):         {errs[4]:.5f}")
+    else:
+        print("  ⚠  Parameter uncertainties unavailable (degenerate pcov).")
+
+    print("-" * 52)
+
+    # BIC model comparison
+    print("  Model comparison (BIC):")
+    print(f"    BIC (linear):     {result.bic_linear:.4f}")
+    print(f"    BIC (sinusoidal): {result.bic_sinusoidal:.4f}")
+    if result.sinusoid_preferred:
+        print("    → Sinusoidal model preferred.")
+    else:
+        print("    → Linear model sufficient (sinusoid not justified).")
+    print("=" * 52)
     print()
 
     # Plot
