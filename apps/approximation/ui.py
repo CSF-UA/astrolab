@@ -103,7 +103,9 @@ class ApproximationWindow(QMainWindow):
         settings_box = QGroupBox("Approximation settings", self)
         settings_layout = QVBoxLayout(settings_box)
         self.method_combo = QComboBox()
-        self.method_combo.addItems(["Polynomial", "Exponential", "Brat+"])
+        self.method_combo.addItems(["Auto", "Polynomial", "Exponential", "Brat+"])
+        self.method_combo.setToolTip("Auto: brightness minima with Brat+ and a linear baseline on the interval with wings,\n"
+                                     "maxima (and minima where that fit fails) with a polynomial of BIC order")
         settings_layout.addWidget(self.method_combo)
 
         wings_row = QHBoxLayout()
@@ -298,6 +300,7 @@ class ApproximationWindow(QMainWindow):
         self.load_lc_btn.clicked.connect(self._load_light_curve)
         self.load_iv_btn.clicked.connect(self._load_intervals)
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
+        self._on_method_changed(self.method_combo.currentIndex())
         self.order_auto_btn.toggled.connect(self._toggle_order_mode)
         self.exp_a_auto.toggled.connect(lambda c: self.exp_a_val.setEnabled(not c))
         self.exp_c_auto.toggled.connect(lambda c: self.exp_c_val.setEnabled(not c))
@@ -327,9 +330,11 @@ class ApproximationWindow(QMainWindow):
         self.order_spinner.setEnabled(not checked)
 
     def _on_method_changed(self, index: int) -> None:
-        self.poly_settings.setVisible(index == 0)
-        self.exp_settings.setVisible(index == 1)
-        self.brat_settings.setVisible(index == 2)
+        self.poly_settings.setVisible(index == 1)
+        self.exp_settings.setVisible(index == 2)
+        self.brat_settings.setVisible(index == 3)
+        if index == 0 and self.wings_spin.value() == 0:
+            self.wings_spin.setValue(50)  # the eclipse profile needs the baseline around the eclipse
 
     @staticmethod
     def _zoom_slider_to_value(slider_value: int) -> float:
@@ -396,7 +401,9 @@ class ApproximationWindow(QMainWindow):
 
     def _current_order_choice(self) -> Union[int, str, dict]:
         idx = self.method_combo.currentIndex()
-        if idx == 1:
+        if idx == 0:
+            return {"method": "auto"}
+        if idx == 2:
             params = logic.ExpParams(
                 a=None if self.exp_a_auto.isChecked() else float(self.exp_a_val.value()),
                 b=float(self.exp_b_val.value()),
@@ -406,7 +413,7 @@ class ApproximationWindow(QMainWindow):
             )
             return {"method": "exponential", "params": params}
         
-        if idx == 2:
+        if idx == 3:
             params = logic.BratParams(
                 c0=None if self.brat_c0_auto.isChecked() else float(self.brat_c0_val.value()),
                 c1=None if self.brat_c1_auto.isChecked() else float(self.brat_c1_val.value()),

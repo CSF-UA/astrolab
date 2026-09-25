@@ -56,6 +56,37 @@ def test_failed_interval_is_skipped():
     assert [r.index for r in res] == [0, 2], [r.index for r in res]
 
 
+def test_load_intervals_reads_the_kind_column(tmp=Path(__file__).with_name("_intervals_tmp.txt")):
+    tmp.write_text("0 5 min\n10 20 max\n30 40\n")  # Splitter v5 writes 'start end kind'; older files have no kind
+    try:
+        assert [iv.kind for iv in logic.load_intervals(tmp)] == ["min", "max", None]
+    finally:
+        tmp.unlink()
+
+
+def test_auto_times_an_eclipse_on_a_slope():
+    mags = eclipse(T) + 400 * (T - 1.5)  # spots or a trend tilt the baseline
+    s, e = int(np.searchsorted(T, 1.44)), int(np.searchsorted(T, 1.56))
+    auto = logic.approximate_all(T, mags, [Interval(s, e, "min")], {"method": "auto"}, wings=0.5)[0]
+    plain = logic.approximate_all(T, mags, [Interval(s, e, "min")], {"method": "brat", "params": None}, wings=0.5)[0]
+    assert auto.method == "brat" and abs(auto.t0 - 1.5) < 1 / 1440, auto
+    assert abs(auto.t0 - 1.5) < 0.5 * abs(plain.t0 - 1.5), (auto.t0, plain.t0)
+
+
+def test_auto_uses_a_polynomial_for_maxima_and_when_the_eclipse_fit_fails():
+    mags = -200 * np.cos(2 * np.pi * T / 0.8)  # brightness maxima at 0.4, 1.2, ...
+    s, e = int(np.searchsorted(T, 1.1)), int(np.searchsorted(T, 1.3))
+    res = logic.approximate_all(T, mags, [Interval(s, e, "max"), Interval(100, 104, "min")], {"method": "auto"})
+    assert res[0].method == "poly" and abs(res[0].t0 - 1.2) < 1 / 1440, res[0]
+    assert res[1].method == "poly", res[1]  # 5 points: too few for the 6 parameters of the eclipse profile
+
+
+def test_auto_tells_a_minimum_from_the_data_without_a_kind():
+    mags = eclipse(T)
+    s, e = int(np.searchsorted(T, 1.44)), int(np.searchsorted(T, 1.56))
+    assert logic.approximate_all(T, mags, [Interval(s, e)], {"method": "auto"}, wings=0.5)[0].method == "brat"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

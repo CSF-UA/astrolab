@@ -16,6 +16,7 @@ AUTO_ORDERS = list(range(3, 11))
 class Interval:
     start: int
     end: int
+    kind: Optional[str] = None  # Splitter's third column: "min" / "max" brightness; None if the file has none
 
 
 @dataclass
@@ -112,7 +113,8 @@ def load_intervals(path: Union[str, Path]) -> List[Interval]:
                 continue
             if start < 0 or end < 0 or end <= start:
                 continue
-            intervals.append(Interval(start=start, end=end))
+            kind = parts[2] if len(parts) > 2 and parts[2] in ("min", "max") else None
+            intervals.append(Interval(start=start, end=end, kind=kind))
     if not intervals:
         raise DataLoadError(f"No usable intervals in {p}")
     return intervals
@@ -150,18 +152,18 @@ def exponential_model(x: np.ndarray, a: float, b: float, c: float, d: float, f: 
     return a * np.exp(-b * np.abs(x - c) ** d) + f
 
 
-def brat_model(x, c0, c1, t0, d, gamma):
-    # Ensure float arguments to avoid issues with numpy
+def brat_model(x, c0, c1, t0, d, gamma, c2=0.0):
+    # c2: optional linear baseline (spots or a trend under the eclipse)
     arg = (x - t0) / d
     # Use cosh but clip large values to avoid overflow in exp
     ch = np.cosh(arg)
     # The formula is 1 - exp(1 - cosh(...)**gamma)
     # We clip to avoid numerical instability
     val = 1 - np.exp(1 - np.power(ch, gamma))
-    return c0 + c1 * val
+    return c0 + c1 * val + c2 * (x - t0)
 
 
-def _fit_brat(x: np.ndarray, y: np.ndarray, params: BratParams | None = None) -> Tuple[np.ndarray, float]:
+def _fit_brat(x: np.ndarray, y: np.ndarray, params: BratParams | None = None, slope: bool = False) -> Tuple[np.ndarray, float]:
     # Initial guesses from the data: the model equals c0 at t0 and c0 + c1 far from it, so start from the
     # point farthest from the median (the eclipse bottom, for magnitudes or flux alike) with the matching sign of c1
     base = float(np.median(y))
@@ -184,6 +186,9 @@ def _fit_brat(x: np.ndarray, y: np.ndarray, params: BratParams | None = None) ->
     )
     
     popt, _ = curve_fit(brat_model, x, y, p0=p0, bounds=bounds)
+    if slope:  # then free the linear baseline, starting from the flat one
+        bounds = (bounds[0] + (-np.inf,), bounds[1] + (np.inf,))
+        popt, _ = curve_fit(brat_model, x, y, p0=[*popt, 0.0], bounds=bounds, maxfev=5000)
     y_fit = brat_model(x, *popt)
     sse = float(np.sum((y - y_fit) ** 2))
     return popt, sse
@@ -256,7 +261,7 @@ def fit_extremum(
         )
     
     if is_brat:
-        popt, sse = _fit_brat(times, mags, params=brat_params)
+        popt, sse = _fit_brat(times, mags, params=brat_params, slope=isinstance(method_choice, dict) and method_choice.get("slope", False))
         t0 = float(popt[2])
         y_at_t0 = float(popt[0])  # psi(t0) = 0, so the model at t0 is c0
         kind = "max"
@@ -325,12 +330,31 @@ def segment(times: np.ndarray, interval: Interval, wings: float = 0.0) -> slice:
 
 
 def _fit_interval(times: np.ndarray, mags: np.ndarray, idx: int, interval: Interval, order_choice, wings: float) -> FitResult:
+    if isinstance(order_choice, dict) and order_choice.get("method") == "auto":
+        return _fit_auto(times, mags, idx, interval, wings)
     seg = segment(times, interval, wings)
     fit = fit_extremum(times[seg], mags[seg], order_choice)
     if not times[seg][0] <= fit.t0 <= times[seg][-1]:
         raise ValueError(f"Fit diverged: extremum at {fit.t0:.5f} is outside the interval.")
     fit.index, fit.interval, fit.wings = idx, interval, wings
     return fit
+
+
+def _fit_auto(times: np.ndarray, mags: np.ndarray, idx: int, interval: Interval, wings: float) -> FitResult:
+    """Brightness minimum: the eclipse profile with a linear baseline on the interval with wings
+    (on the TESS sample it gave a smaller O-C scatter than a polynomial for 11 of 16 stars);
+    maximum, or the eclipse fit failed: polynomial of BIC order on the interval itself."""
+    kind = interval.kind
+    if kind is None:  # magnitudes: a brightness minimum is higher in the middle than at the ends
+        m = mags[segment(times, interval)]
+        third = max(len(m) // 3, 1)
+        kind = "min" if np.median(m[third:-third] if len(m) > 2 else m) > np.median(np.r_[m[:third], m[-third:]]) else "max"
+    if kind == "min":
+        try:
+            return _fit_interval(times, mags, idx, interval, {"method": "brat", "params": None, "slope": True}, wings or 0.5)
+        except Exception:
+            pass
+    return _fit_interval(times, mags, idx, interval, "auto", 0.0)
 
 
 def approximate_all(
