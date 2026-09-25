@@ -1,6 +1,7 @@
 """Self-checks for apps/approximation/logic.py. Run: uv run python tests/test_approximation.py"""
 
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -56,12 +57,11 @@ def test_failed_interval_is_skipped():
     assert [r.index for r in res] == [0, 2], [r.index for r in res]
 
 
-def test_load_intervals_reads_the_kind_column(tmp=Path(__file__).with_name("_intervals_tmp.txt")):
-    tmp.write_text("0 5 min\n10 20 max\n30 40\n")  # Splitter v5 writes 'start end kind'; older files have no kind
-    try:
+def test_load_intervals_reads_the_kind_column():
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d) / "iv.txt"
+        tmp.write_text("0 5 min\n10 20 max\n30 40\n")  # Splitter v5 writes 'start end kind'; older files have none
         assert [iv.kind for iv in logic.load_intervals(tmp)] == ["min", "max", None]
-    finally:
-        tmp.unlink()
 
 
 def test_auto_times_an_eclipse_on_a_slope():
@@ -74,17 +74,66 @@ def test_auto_times_an_eclipse_on_a_slope():
 
 
 def test_auto_uses_a_polynomial_for_maxima_and_when_the_eclipse_fit_fails():
-    mags = -200 * np.cos(2 * np.pi * T / 0.8)  # brightness maxima at 0.4, 1.2, ...
+    mags = 200 * np.cos(2 * np.pi * T / 0.8)  # magnitude minima = brightness maxima at 0.4, 1.2, ...
     s, e = int(np.searchsorted(T, 1.1)), int(np.searchsorted(T, 1.3))
     res = logic.approximate_all(T, mags, [Interval(s, e, "max"), Interval(100, 104, "min")], {"method": "auto"})
     assert res[0].method == "poly" and abs(res[0].t0 - 1.2) < 1 / 1440, res[0]
-    assert res[1].method == "poly", res[1]  # 5 points: too few for the 6 parameters of the eclipse profile
+    assert res[1].method == "poly", res[1]  # 5 points, no wings: too few for the 6 parameters of the eclipse profile
 
 
 def test_auto_tells_a_minimum_from_the_data_without_a_kind():
     mags = eclipse(T)
     s, e = int(np.searchsorted(T, 1.44)), int(np.searchsorted(T, 1.56))
     assert logic.approximate_all(T, mags, [Interval(s, e)], {"method": "auto"}, wings=0.5)[0].method == "brat"
+
+
+def test_auto_minimum_of_a_contact_binary_with_wide_wings():
+    P = 0.35  # EW: brightness minima (magnitude maxima) at phases 0 and 0.5, maxima in the wings
+    mags = 300 * np.cos(4 * np.pi * T / P) + rng.normal(0, 3, T.size)
+    t_min = 4 * P  # 1.4
+    s, e = int(np.searchsorted(T, t_min - 0.03)), int(np.searchsorted(T, t_min + 0.03))
+    for wings in (0.5, 1.0, 2.0):
+        r = logic.approximate_all(T, mags, [Interval(s, e, "min")], {"method": "auto"}, wings=wings)[0]
+        assert abs(r.t0 - t_min) < 2 / 1440 and r.kind == "min", (wings, r.method, r.t0, r.kind)
+
+
+def test_kind_is_brightness_for_every_method():
+    mags = eclipse(T)  # an eclipse: brightness minimum, astrolab kind "min" like the polynomial gives
+    s, e = int(np.searchsorted(T, 1.44)), int(np.searchsorted(T, 1.56))
+    for choice in ("auto", {"method": "brat", "params": None}, {"method": "exponential", "params": None}, {"method": "auto"}):
+        r = logic.approximate_all(T, mags, [Interval(s, e, "min")], choice, wings=0.5 if choice != "auto" else 0.0)[0]
+        assert r.kind == "min", (choice, r.method, r.kind)
+
+
+def test_bic_keeps_residual_freedom_on_short_intervals():
+    x = np.linspace(-0.01, 0.01, 8)
+    y = 3e4 * x**2 + rng.normal(0, 0.5, x.size)
+    assert logic._pick_order(x, y, "auto", 7)[1] <= 5  # order N-1 interpolates: SSE 0, BIC -inf
+
+
+def test_auto_respects_zero_wings():
+    mags = eclipse(T)
+    s, e = int(np.searchsorted(T, 1.44)), int(np.searchsorted(T, 1.56))
+    assert logic.approximate_all(T, mags, [Interval(s, e, "min")], {"method": "auto"}, wings=0.0)[0].wings == 0.0
+
+
+def test_auto_rejects_an_eclipse_fit_on_a_spike():
+    mags = rng.normal(0, 3, T.size)  # no eclipse, one 6-min spike: the eclipse profile would lock onto it
+    s = int(np.searchsorted(T, 1.47))
+    mags[s + 20 : s + 23] += 80
+    res = logic.approximate_all(T, mags, [Interval(s, s + 43, "min")], {"method": "auto"}, wings=0.5)
+    assert all(r.method != "brat" for r in res), [(r.method, r.coefficients) for r in res]
+
+
+def test_a_fit_of_the_other_kind_is_a_failure():
+    P = 0.8
+    mags = 200 * np.cos(2 * np.pi * T / P) + rng.normal(0, 2, T.size)  # magnitude minima = brightness maxima at 0.4, 1.2
+    s, e = int(np.searchsorted(T, 1.1)), int(np.searchsorted(T, 1.3))
+    errors = {}
+    res = logic.approximate_all(T, mags, [Interval(s, e, "max")], {"method": "exponential", "params": None}, errors=errors)
+    assert res == [] and 0 in errors, (res, errors)  # a bump model cannot time a brightness maximum: no result
+    res = logic.approximate_all(T, mags, [Interval(s, e, "min")], {"method": "polynomial", "order": "auto"}, errors=errors)
+    assert res == [] and "brightness max" in errors[0], (res, errors)  # the file says minimum, the data a maximum
 
 
 if __name__ == "__main__":

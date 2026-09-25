@@ -204,7 +204,7 @@ class ApproximationWindow(QMainWindow):
         self.brat_d_val.setEnabled(False)
 
         self.brat_gamma_val = QDoubleSpinBox()
-        self.brat_gamma_val.setRange(1e-6, 100)
+        self.brat_gamma_val.setRange(1e-6, 10)  # the fit bounds gamma to 10
         self.brat_gamma_val.setValue(1.0)
 
         brat_layout.addRow(self.brat_c0_auto, self.brat_c0_val)
@@ -333,8 +333,8 @@ class ApproximationWindow(QMainWindow):
         self.poly_settings.setVisible(index == 1)
         self.exp_settings.setVisible(index == 2)
         self.brat_settings.setVisible(index == 3)
-        if index == 0 and self.wings_spin.value() == 0:
-            self.wings_spin.setValue(50)  # the eclipse profile needs the baseline around the eclipse
+        # the eclipse profile needs the baseline around the eclipse; a polynomial is best on the interval itself
+        self.wings_spin.setValue(50 if index in (0, 3) else 0)
 
     @staticmethod
     def _zoom_slider_to_value(slider_value: int) -> float:
@@ -488,15 +488,17 @@ class ApproximationWindow(QMainWindow):
     def _run_approximation(self) -> None:
         if not self._ensure_inputs():
             return
+        errors: dict = {}
         self.results = logic.approximate_all(
-            self.times, self.mags, self.intervals, self._current_order_choice(), self.wings_spin.value() / 100
+            self.times, self.mags, self.intervals, self._current_order_choice(), self.wings_spin.value() / 100, errors
         )
         self._refresh_results_table()
         self.plot.set_results(self.results)
-        fitted = {res.index for res in self.results}
-        failed = [str(i + 1) for i in range(len(self.intervals)) if i not in fitted]
         msg = f"Approximation finished: {len(self.results)} of {len(self.intervals)} intervals fitted."
-        self.status_label.setText(msg + (f" Failed: {', '.join(failed)}." if failed else " Review results below."))
+        if errors:
+            first = min(errors)
+            msg += f" Failed: {', '.join(str(i + 1) for i in sorted(errors))} (#{first + 1}: {errors[first]})"
+        self.status_label.setText(msg if errors else msg + " Review results below.")
 
     def _refresh_results_table(self) -> None:
         rows = logic.results_to_table_rows(self.results)

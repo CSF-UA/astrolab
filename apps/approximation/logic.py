@@ -132,7 +132,7 @@ def _pick_order(x: np.ndarray, y: np.ndarray, order_choice: Union[int, str], max
         chosen_order = min(order_choice, max_order)
         coeffs, sse = _fit_for_order(x, y, chosen_order)
         return coeffs, chosen_order, sse
-    candidates = [n for n in AUTO_ORDERS if n <= max_order]
+    candidates = [n for n in AUTO_ORDERS if n <= min(max_order, max(x.size - 3, 3))]  # 2+ residual degrees of freedom
     best, best_bic = None, float("inf")
     for n in candidates:
         try:
@@ -163,13 +163,16 @@ def brat_model(x, c0, c1, t0, d, gamma, c2=0.0):
     return c0 + c1 * val + c2 * (x - t0)
 
 
-def _fit_brat(x: np.ndarray, y: np.ndarray, params: BratParams | None = None, slope: bool = False) -> Tuple[np.ndarray, float]:
+def _fit_brat(
+    x: np.ndarray, y: np.ndarray, params: BratParams | None = None, slope: bool = False, dip: bool = False
+) -> Tuple[np.ndarray, float]:
+    """dip: a brightness minimum (magnitude peak) is wanted, so start there and keep c1 <= 0."""
     # Initial guesses from the data: the model equals c0 at t0 and c0 + c1 far from it, so start from the
     # point farthest from the median (the eclipse bottom, for magnitudes or flux alike) with the matching sign of c1
     base = float(np.median(y))
     k = min(5, y.size)
     ys = np.convolve(y, np.ones(k) / k, mode="valid")
-    peak = int(np.argmax(np.abs(ys - base)))
+    peak = int(np.argmax(ys) if dip else np.argmax(np.abs(ys - base)))
     c0_init = params.c0 if params and params.c0 is not None else float(ys[peak])
     c1_init = params.c1 if params and params.c1 is not None else base - float(ys[peak])
     t0_init = params.t0 if params and params.t0 is not None else float(x[peak + k // 2])
@@ -182,7 +185,7 @@ def _fit_brat(x: np.ndarray, y: np.ndarray, params: BratParams | None = None, sl
     # But let's allow flexibility.
     bounds = (
         (-np.inf, -np.inf, -np.inf, 1e-9, 1e-9),
-        (np.inf, np.inf, np.inf, np.inf, 10.0),  # Limit gamma to avoid extreme values
+        (np.inf, 0.0 if dip else np.inf, np.inf, np.inf, 10.0),  # Limit gamma to avoid extreme values
     )
     
     popt, _ = curve_fit(brat_model, x, y, p0=p0, bounds=bounds)
@@ -246,7 +249,7 @@ def fit_extremum(
         popt, sse = _fit_exponential(times, mags, params=exp_params)
         t0 = float(popt[2])
         y_at_t0 = float(popt[0] + popt[4])  # A + F
-        kind = "max"
+        kind = "min"  # A > 0: a magnitude peak, i.e. a brightness minimum
         return FitResult(
             index=-1,
             interval=Interval(start=0, end=0),
@@ -261,10 +264,11 @@ def fit_extremum(
         )
     
     if is_brat:
-        popt, sse = _fit_brat(times, mags, params=brat_params, slope=isinstance(method_choice, dict) and method_choice.get("slope", False))
+        opts = method_choice if isinstance(method_choice, dict) else {}
+        popt, sse = _fit_brat(times, mags, params=brat_params, slope=opts.get("slope", False), dip=opts.get("dip", False))
         t0 = float(popt[2])
         y_at_t0 = float(popt[0])  # psi(t0) = 0, so the model at t0 is c0
-        kind = "max"
+        kind = "min" if popt[1] < 0 else "max"  # c1 < 0: a magnitude peak at t0, i.e. a brightness minimum
         return FitResult(
             index=-1,
             interval=Interval(start=0, end=0),
@@ -320,6 +324,8 @@ def fit_extremum(
 def segment(times: np.ndarray, interval: Interval, wings: float = 0.0) -> slice:
     """Points of the interval (end inclusive), widened by `wings` of its width on each side."""
     end = min(interval.end, times.size - 1)
+    if interval.start > end:
+        return slice(interval.start, interval.start)  # beyond the data: nothing to fit
     if wings <= 0:
         return slice(interval.start, end + 1)
     pad = wings * (times[end] - times[interval.start])
@@ -336,14 +342,17 @@ def _fit_interval(times: np.ndarray, mags: np.ndarray, idx: int, interval: Inter
     fit = fit_extremum(times[seg], mags[seg], order_choice)
     if not times[seg][0] <= fit.t0 <= times[seg][-1]:
         raise ValueError(f"Fit diverged: extremum at {fit.t0:.5f} is outside the interval.")
+    if interval.kind and fit.kind != interval.kind:
+        raise ValueError(f"Found a brightness {fit.kind}, the interval is a {interval.kind}.")
     fit.index, fit.interval, fit.wings = idx, interval, wings
     return fit
 
 
 def _fit_auto(times: np.ndarray, mags: np.ndarray, idx: int, interval: Interval, wings: float) -> FitResult:
-    """Brightness minimum: the eclipse profile with a linear baseline on the interval with wings
-    (on the TESS sample it gave a smaller O-C scatter than a polynomial for 11 of 16 stars);
-    maximum, or the eclipse fit failed: polynomial of BIC order on the interval itself."""
+    """Brightness minimum: the eclipse profile with a linear baseline on the interval with wings, kept if
+    its t0 is inside the interval and its width is that of an eclipse (on the TESS sample: a smaller O-C
+    scatter than a polynomial for 14 of 16 stars). Maximum, or no such fit: polynomial of BIC order on
+    the interval itself."""
     kind = interval.kind
     if kind is None:  # magnitudes: a brightness minimum is higher in the middle than at the ends
         m = mags[segment(times, interval)]
@@ -351,22 +360,30 @@ def _fit_auto(times: np.ndarray, mags: np.ndarray, idx: int, interval: Interval,
         kind = "min" if np.median(m[third:-third] if len(m) > 2 else m) > np.median(np.r_[m[:third], m[-third:]]) else "max"
     if kind == "min":
         try:
-            return _fit_interval(times, mags, idx, interval, {"method": "brat", "params": None, "slope": True}, wings or 0.5)
+            fit = _fit_interval(times, mags, idx, interval, {"method": "brat", "params": None, "slope": True, "dip": True}, wings)
+            a, b = times[interval.start], times[min(interval.end, times.size - 1)]
+            d, gamma = fit.coefficients[3], fit.coefficients[4]
+            fwhm = 2 * d * np.arccosh((1 + np.log(2)) ** (1 / gamma))  # psi = 1/2
+            if a <= fit.t0 <= b and fwhm > 0.15 * (b - a):  # else a neighbour or a spike (eclipses: 0.3-0.5)
+                return fit
         except Exception:
             pass
     return _fit_interval(times, mags, idx, interval, "auto", 0.0)
 
 
 def approximate_all(
-    times: np.ndarray, mags: np.ndarray, intervals: Iterable[Interval], order_choice: Union[int, str, dict], wings: float = 0.0
+    times: np.ndarray, mags: np.ndarray, intervals: Iterable[Interval], order_choice: Union[int, str, dict],
+    wings: float = 0.0, errors: Optional[dict] = None,
 ) -> List[FitResult]:
-    """Fit every interval; an interval whose fit fails is skipped (its index is missing from the results)."""
+    """Fit every interval; an interval whose fit fails is skipped (its index is missing from the results,
+    the reason goes to `errors[index]` if a dict is given)."""
     results: List[FitResult] = []
     for idx, interval in enumerate(intervals):
         try:
             results.append(_fit_interval(times, mags, idx, interval, order_choice, wings))
-        except Exception:
-            continue
+        except Exception as exc:
+            if errors is not None:
+                errors[idx] = str(exc)
     return results
 
 
