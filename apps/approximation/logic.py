@@ -364,7 +364,8 @@ def _fit_auto(times: np.ndarray, mags: np.ndarray, idx: int, interval: Interval,
             a, b = times[interval.start], times[min(interval.end, times.size - 1)]
             d, gamma = fit.coefficients[3], fit.coefficients[4]
             fwhm = 2 * d * np.arccosh((1 + np.log(2)) ** (1 / gamma))  # psi = 1/2
-            if a <= fit.t0 <= b and fwhm > 0.15 * (b - a):  # else a neighbour or a spike (eclipses: 0.3-0.5)
+            # eclipses: FWHM 0.3-0.6 of the interval; else a neighbour, a spike or no dip at all
+            if a <= fit.t0 <= b and 0.15 * (b - a) < fwhm < 2 * (b - a):
                 return fit
         except Exception:
             pass

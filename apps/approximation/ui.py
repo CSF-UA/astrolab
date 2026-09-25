@@ -334,7 +334,10 @@ class ApproximationWindow(QMainWindow):
         self.exp_settings.setVisible(index == 2)
         self.brat_settings.setVisible(index == 3)
         # the eclipse profile needs the baseline around the eclipse; a polynomial is best on the interval itself
-        self.wings_spin.setValue(50 if index in (0, 3) else 0)
+        eclipse = index in (0, 3)
+        if eclipse != getattr(self, "_eclipse_method", None):  # keep the user's wings within a group
+            self.wings_spin.setValue(50 if eclipse else 0)
+        self._eclipse_method = eclipse
 
     @staticmethod
     def _zoom_slider_to_value(slider_value: int) -> float:
