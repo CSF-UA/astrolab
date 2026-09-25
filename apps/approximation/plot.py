@@ -145,7 +145,7 @@ class PlotWidget(QWidget):
         colors = np.tile(np.array([[0.1, 0.1, 0.1, 0.85]], dtype=np.float32), (len(times), 1))
         for idx, iv in enumerate(intervals):
             c = self.interval_colors[idx % len(self.interval_colors)]
-            colors[iv.start : iv.end] = c
+            colors[logic.segment(times, iv)] = c
         if self.times is not None and self.mags is not None:
             pos = np.column_stack((self.times, self.mags)).astype(np.float32, copy=False)
             self.light_curve.set_data(pos, face_color=colors, edge_color=None, size=6)
@@ -172,7 +172,7 @@ class PlotWidget(QWidget):
         # draw fit curves per interval
         if self.times is not None and self.mags is not None:
             for res in results:
-                seg_x = self.times[res.interval.start : res.interval.end]
+                seg_x = self.times[logic.segment(self.times, res.interval, res.wings)]
                 dense_x = np.linspace(seg_x.min(), seg_x.max(), 600, dtype=np.float32)
                 if res.method == "exp":
                     fit_y = logic.exponential_model(dense_x, *res.coefficients)
@@ -199,8 +199,7 @@ class PlotWidget(QWidget):
             self.canvas.update()
             self.selected_region.visible = False
             return
-        seg_x = times[interval.start : interval.end]
-        seg_y = mags[interval.start : interval.end]
+        seg_x = times[logic.segment(times, interval)]
         if len(seg_x) == 0:
             self.canvas.update()
             return
@@ -208,6 +207,6 @@ class PlotWidget(QWidget):
         center = ((seg_x.min() + seg_x.max()) / 2.0, (y0 + y1) / 2.0)
         self.selected_region.center = center
         self.selected_region.width = float(seg_x.max() - seg_x.min())
-        self.selected_region.height = float(y1 - y0)
+        self.selected_region.height = abs(float(y1 - y0))  # y axis is inverted: y1 < y0
         self.selected_region.visible = True
         self.canvas.update()

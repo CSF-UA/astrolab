@@ -106,6 +106,17 @@ class ApproximationWindow(QMainWindow):
         self.method_combo.addItems(["Polynomial", "Exponential", "Brat+"])
         settings_layout.addWidget(self.method_combo)
 
+        wings_row = QHBoxLayout()
+        wings_row.addWidget(QLabel("Wings, % of interval:"))
+        self.wings_spin = QSpinBox()
+        self.wings_spin.setRange(0, 200)
+        self.wings_spin.setSingleStep(10)
+        self.wings_spin.setSuffix(" %")
+        self.wings_spin.setToolTip("Widen each interval by this share of its width on each side before fitting.\n"
+                                   "Use ~50 % with Brat+ for eclipses: the model then sees the flat baseline.")
+        wings_row.addWidget(self.wings_spin)
+        settings_layout.addLayout(wings_row)
+
         self.poly_settings = QWidget()
         poly_layout = QHBoxLayout(self.poly_settings)
         poly_layout.setContentsMargins(0, 0, 0, 0)
@@ -470,14 +481,15 @@ class ApproximationWindow(QMainWindow):
     def _run_approximation(self) -> None:
         if not self._ensure_inputs():
             return
-        try:
-            self.results = logic.approximate_all(self.times, self.mags, self.intervals, self._current_order_choice())
-        except Exception as exc:
-            QMessageBox.critical(self, "Approximation failed", str(exc))
-            return
+        self.results = logic.approximate_all(
+            self.times, self.mags, self.intervals, self._current_order_choice(), self.wings_spin.value() / 100
+        )
         self._refresh_results_table()
         self.plot.set_results(self.results)
-        self.status_label.setText("Approximation finished. Review results below.")
+        fitted = {res.index for res in self.results}
+        failed = [str(i + 1) for i in range(len(self.intervals)) if i not in fitted]
+        msg = f"Approximation finished: {len(self.results)} of {len(self.intervals)} intervals fitted."
+        self.status_label.setText(msg + (f" Failed: {', '.join(failed)}." if failed else " Review results below."))
 
     def _refresh_results_table(self) -> None:
         rows = logic.results_to_table_rows(self.results)
@@ -502,11 +514,13 @@ class ApproximationWindow(QMainWindow):
             QMessageBox.information(self, "No selection", "Select a row in the results table.")
             return
         try:
-            updated = logic.recompute_result(self.times, self.mags, target, self._current_order_choice())
+            updated = logic.recompute_result(
+                self.times, self.mags, target, self._current_order_choice(), self.wings_spin.value() / 100
+            )
         except Exception as exc:
             QMessageBox.critical(self, "Re-approx failed", str(exc))
             return
-        self.results[target.index] = updated
+        self.results[self.table.currentRow()] = updated
         self._refresh_results_table()
         self.plot.set_results(self.results)
         self.status_label.setText(f"Recomputed interval {target.index + 1}.")
@@ -516,9 +530,7 @@ class ApproximationWindow(QMainWindow):
         if target is None:
             QMessageBox.information(self, "No selection", "Select a row to delete.")
             return
-        del self.results[target.index]
-        for idx, res in enumerate(self.results):
-            res.index = idx
+        del self.results[self.table.currentRow()]  # rows keep their interval numbers
         self._refresh_results_table()
         self.plot.set_results(self.results)
         self.plot.highlight_interval(self.times if self.times is not None else None, self.mags if self.mags is not None else None, None)
