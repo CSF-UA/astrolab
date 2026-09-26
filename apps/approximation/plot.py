@@ -39,8 +39,13 @@ class PlotWidget(QWidget):
         grid.add_widget(scene.Widget(), row=1, col=0)
         grid.add_widget(self.y_axis, row=0, col=0)
         grid.add_widget(self.x_axis, row=1, col=1)
-        self.x_axis.link_view(self.view)
-        self.y_axis.link_view(self.view)
+        for a in (self.x_axis, self.y_axis):
+            a.link_view(self.view)
+        # VisPy relabels an axis only when the camera moves, not when the layout resizes or moves the axis
+        # (a maximised window kept the old labels over the stretched axis): relabel before every draw
+        self.canvas.events.draw.connect(
+            lambda e: [a._view_changed() for a in (self.x_axis, self.y_axis)], position="first"
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
