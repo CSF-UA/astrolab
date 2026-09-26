@@ -179,15 +179,8 @@ class PlotWidget(QWidget):
         if self.times is not None and self.mags is not None:
             for res in results:
                 seg_x = self.times[logic.segment(self.times, res.interval, res.wings)]
-                dense_x = np.linspace(seg_x.min(), seg_x.max(), 600, dtype=np.float32)
-                if res.method == "exp":
-                    fit_y = logic.exponential_model(dense_x, *res.coefficients)
-                elif res.method == "brat":
-                    fit_y = logic.brat_model(dense_x, *res.coefficients)
-                else:
-                    fit_x_centered = dense_x - res.x_mean
-                    fit_y = np.polyval(res.coefficients, fit_x_centered)
-                dense_y = fit_y
+                dense_x = np.linspace(*(res.x_range or (seg_x.min(), seg_x.max())), 600, dtype=np.float32)
+                dense_y = logic.evaluate(res, dense_x)
                 color_idx = res.index % len(self.interval_colors)
                 ln = visuals.Line(
                     np.column_stack((dense_x, dense_y)).astype(np.float32, copy=False),

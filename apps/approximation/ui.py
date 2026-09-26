@@ -103,9 +103,15 @@ class ApproximationWindow(QMainWindow):
         settings_box = QGroupBox("Approximation settings", self)
         settings_layout = QVBoxLayout(settings_box)
         self.method_combo = QComboBox()
-        self.method_combo.addItems(["Auto", "Polynomial", "Exponential", "Brat+"])
-        self.method_combo.setToolTip("Auto: brightness minima with Brat+ and a linear baseline on the interval with wings,\n"
-                                     "maxima (and minima where that fit fails) with a polynomial of BIC order")
+        self.method_combo.addItems(["Auto", "Polynomial", "Exponential", "Brat+", "Symmetric polynomial",
+                                    "Wall-supported line", "Asymptotic parabola"])
+        self.method_combo.setToolTip(
+            "Auto: brightness minima with Brat+ and a linear baseline on the interval with wings,\n"
+            "maxima (and minima where that fit fails) with a polynomial of BIC order.\n"
+            "Near-extremum functions of MAVKA (Andrych & Andronov 2019), best on the interval itself:\n"
+            "Symmetric polynomial: even powers of (t - t0), for symmetric extrema, flat maxima between eclipses too;\n"
+            "Wall-supported line: flat bottom and steep walls, for total eclipses;\n"
+            "Asymptotic parabola: a parabola continued by straight lines, for asymmetric maxima of pulsating stars")
         settings_layout.addWidget(self.method_combo)
 
         wings_row = QHBoxLayout()
@@ -416,6 +422,8 @@ class ApproximationWindow(QMainWindow):
             )
             return {"method": "exponential", "params": params}
         
+        if idx >= 4:
+            return {"method": ("sym", "wsl", "apar")[idx - 4]}
         if idx == 3:
             params = logic.BratParams(
                 c0=None if self.brat_c0_auto.isChecked() else float(self.brat_c0_val.value()),

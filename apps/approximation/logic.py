@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple, Union
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize_scalar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,6 +33,7 @@ class FitResult:
     method: str = "poly"
     wings: float = 0.0
     sigma_t0: float = float("nan")  # 1-sigma error of t0 from the fit (inf when t0 is not a turning point)
+    x_range: Optional[Tuple[float, float]] = None  # the times fitted, when only a part of the interval was
 
 
 @dataclass
@@ -241,11 +242,120 @@ def _poly_sigma_t0(x: np.ndarray, y: np.ndarray, coeffs: np.ndarray, t: float) -
     return float(np.sqrt(v)) if np.isfinite(v) and v >= 0 else float("inf")
 
 
+# Near-extremum functions of MAVKA (Andrych & Andronov 2019, arXiv:1812.06949)
+
+def sym_model(x, t0, *c):
+    """Symmetric polynomial: sum of c_k (x - t0)^(2k), highest power first."""
+    return np.polyval(c, (x - t0) ** 2)
+
+
+def wsl_model(x, a, b, t0, h):
+    """Wall-supported line: flat a within |x - t0| < h (a total eclipse), walls b (|x - t0| - h)^1.5 outside."""
+    return a + b * np.clip(np.abs(x - t0) - h, 0, None) ** 1.5
+
+
+def apar_model(x, a, b, t0, dl, dr):
+    """Asymptotic parabola (Marsakova & Andronov 1996): a + b (x - t0)^2 on [t0 - dl, t0 + dr], its tangent
+    lines outside, so the two branches may differ (asymmetric maxima of pulsating stars)."""
+    u = x - t0
+    return a + b * np.where(u > dr, 2 * dr * u - dr**2, np.where(u < -dl, -2 * dl * u - dl**2, u**2))
+
+
+MODELS = {"exp": exponential_model, "brat": brat_model, "sym": sym_model, "wsl": wsl_model, "apar": apar_model}
+
+
+def evaluate(res: FitResult, x: np.ndarray) -> np.ndarray:
+    """The fitted curve of a result at times x."""
+    if res.method in MODELS:
+        return MODELS[res.method](x, *res.coefficients)
+    return np.polyval(res.coefficients, x - res.x_mean)
+
+
+def _sym_sse(x, y, t, k):
+    a = np.vander((x - t) ** 2, k + 1)
+    c = np.linalg.lstsq(a, y, rcond=None)[0]
+    r = y - a @ c
+    return float(r @ r), c
+
+
+def _fit_sym(x: np.ndarray, y: np.ndarray):
+    """Symmetric polynomial of degree 2k (k = 1..4 by BIC). t0: least SSE, from a grid over the middle 70 %
+    of the interval, refined; its error from the curvature of SSE(t0), the coefficients following t0."""
+    lo, hi = float(x.min()), float(x.max())
+    w = hi - lo
+    grid = np.linspace(lo + 0.15 * w, hi - 0.15 * w, 41)
+    step = grid[1] - grid[0]
+    g = grid[int(np.argmin([_sym_sse(x, y, t, 2)[0] for t in grid]))]
+    best = None
+    for k in range(1, 5):
+        if x.size < k + 4:  # 2+ residual degrees of freedom
+            break
+        t0 = float(minimize_scalar(lambda t: _sym_sse(x, y, t, k)[0], bounds=(g - 2 * step, g + 2 * step),
+                                   method="bounded", options={"xatol": w * 1e-8}).x)
+        sse, c = _sym_sse(x, y, t0, k)
+        bic = x.size * np.log(max(sse, 1e-300) / x.size) + (k + 2) * np.log(x.size)
+        if best is None or bic < best[0]:
+            best = (bic, k, t0, sse, c)
+    if best is None:
+        raise ValueError("Interval too short to fit.")
+    _, k, t0, sse, c = best
+    h = w * 1e-3
+    curvature = (_sym_sse(x, y, t0 + h, k)[0] - 2 * sse + _sym_sse(x, y, t0 - h, k)[0]) / h**2
+    s2 = sse / (x.size - k - 2)
+    sigma = float(np.sqrt(2 * s2 / curvature)) if curvature > 0 else float("inf")
+    return t0, k, sse, c, sigma
+
+
+def _core(x: np.ndarray, y: np.ndarray) -> slice:
+    """The part of the interval beyond half the height of its extremum over the level at the interval ends:
+    where the near-extremum functions hold (a Splitter window reaches the neighbouring extrema)."""
+    q = np.polyfit(x - x.mean(), y, 2)
+    n = max(y.size // 10, 1)
+    edge = float(np.median(np.r_[y[:n], y[-n:]]))
+    peak = float(np.percentile(y, 98 if q[0] < 0 else 2))  # magnitudes: a peak is a brightness minimum
+    idx = np.flatnonzero((y - (edge + peak) / 2) * np.sign(peak - edge) > 0)
+    return slice(idx[0], idx[-1] + 1) if idx.size >= 8 else slice(None)
+
+
+def _fit_walls(model, x: np.ndarray, y: np.ndarray):
+    """Wall-supported line or asymptotic parabola on the core of the interval, started from the vertex of a
+    parabola through it."""
+    core = _core(x, y)
+    x, y = x[core], y[core]
+    lo, hi = float(x.min()), float(x.max())
+    w = hi - lo
+    xm = float(np.mean(x))
+    q = np.polyfit(x - xm, y, 2)
+    t = float(np.clip(xm - q[1] / (2 * q[0]), lo + 0.15 * w, hi - 0.15 * w)) if q[0] else xm
+    a = float(np.median(y[np.abs(x - t) < 0.1 * w])) if np.any(np.abs(x - t) < 0.1 * w) else float(np.polyval(q, t - xm))
+    if model is wsl_model:
+        b = np.sign(q[0] or 1.0) * np.ptp(y) / (0.5 * w) ** 1.5
+        p0, bounds = [a, b, t, 0.1 * w], ([-np.inf, -np.inf, lo, 0.0], [np.inf, np.inf, hi, w])
+    else:
+        p0 = [a, q[0] or 1e-9, t, 0.25 * w, 0.25 * w]
+        bounds = ([-np.inf, -np.inf, lo, 1e-3 * w, 1e-3 * w], [np.inf, np.inf, hi, 2 * w, 2 * w])
+    popt, pcov = curve_fit(model, x, y, p0=p0, bounds=bounds, maxfev=5000)
+    return popt, float(np.sum((y - model(x, *popt)) ** 2)), pcov, (lo, hi)
+
+
 def fit_extremum(
     times: np.ndarray, mags: np.ndarray, method_choice: Union[int, str, dict]
 ) -> FitResult:
     if len(times) < 3:
         raise ValueError("Interval too short to fit.")
+
+    name = method_choice.get("method") if isinstance(method_choice, dict) else method_choice
+    if name == "sym":
+        t0, k, sse, c, sigma = _fit_sym(times, mags)
+        return FitResult(index=-1, interval=Interval(start=0, end=0), order=2 * k, t0=t0,
+                         kind="max" if c[-2] > 0 else "min",  # magnitudes: up from t0 is a brightness maximum
+                         coefficients=np.r_[t0, c], x_mean=float(np.mean(times)), sse=sse, y_at_t0=float(c[-1]),
+                         method="sym", sigma_t0=sigma)
+    if name in ("wsl", "apar"):
+        popt, sse, pcov, span = _fit_walls(MODELS[name], times, mags)
+        return FitResult(index=-1, interval=Interval(start=0, end=0), order=-1, t0=float(popt[2]),
+                         kind="max" if popt[1] > 0 else "min", coefficients=popt, x_mean=float(np.mean(times)),
+                         sse=sse, y_at_t0=float(popt[0]), method=name, sigma_t0=_sigma(pcov, 2), x_range=span)
 
     x_mean = float(np.mean(times))
     centered_x = times - x_mean
@@ -427,7 +537,7 @@ def recompute_result(
 def results_to_table_rows(results: List[FitResult]) -> List[List[str]]:
     rows: List[List[str]] = []
     for res in results:
-        order_str = str(res.order) if res.method == "poly" else "N/A"
+        order_str = str(res.order) if res.method in ("poly", "sym") else "N/A"
         rows.append(
             [
                 str(res.index + 1),
@@ -462,17 +572,9 @@ def save_results_and_figures(
     for res in results:
         seg = segment(times, res.interval, res.wings)
         seg_x, seg_y = times[seg], mags[seg]
-        dense_x = np.linspace(seg_x.min(), seg_x.max(), 1000)
-        if res.method == "exp":
-            dense_y = exponential_model(dense_x, *res.coefficients)
-            label = "exp fit"
-        elif res.method == "brat":
-            dense_y = brat_model(dense_x, *res.coefficients)
-            label = "brat+ fit"
-        else:
-            dense_x_centered = dense_x - res.x_mean
-            dense_y = np.polyval(res.coefficients, dense_x_centered)
-            label = f"poly n={res.order}"
+        dense_x = np.linspace(*(res.x_range or (seg_x.min(), seg_x.max())), 1000)
+        dense_y = evaluate(res, dense_x)
+        label = f"{res.method} n={res.order}" if res.method in ("poly", "sym") else f"{res.method} fit"
         fig, ax = plt.subplots(figsize=(8, 5))
         disp_seg_y = -seg_y
         disp_dense_y = -dense_y

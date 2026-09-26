@@ -144,13 +144,41 @@ def test_sigma_t0_matches_the_scatter_of_t0():
         "brat": (lambda: eclipse(x), {"method": "brat", "slope": True, "dip": True}),
         "poly": (lambda: hump(x) + rng.normal(0, 2, x.size), "auto"),
     }
+    wide = T[(T > 1.35) & (T < 1.65)]
+    cases |= {
+        "sym": (lambda: hump(x) + rng.normal(0, 2, x.size), "sym"),
+        "wsl": (lambda: logic.wsl_model(x, 40, -900, 1.5, 0.02) + rng.normal(0, 2, x.size), "wsl"),
+        "apar": (lambda: logic.apar_model(wide, 0, 30000, 1.5, 0.03, 0.08) + rng.normal(0, 2, wide.size), "apar"),
+    }
     for name, (data, choice) in cases.items():
-        fits = [logic.fit_extremum(x, data(), choice) for _ in range(60)]
+        xs = wide if name == "apar" else x
+        fits = [logic.fit_extremum(xs, data(), choice) for _ in range(60)]
         t0 = np.array([f.t0 for f in fits])
         sigma = np.array([f.sigma_t0 for f in fits])
         assert np.isfinite(sigma).all() and (sigma > 0).all(), name
         ratio = np.median(sigma) / np.std(t0)
         assert 0.6 < ratio < 1.6, (name, ratio, np.median(sigma), np.std(t0))
+
+
+def test_near_extremum_functions():
+    """MAVKA's functions: the moment and kind of a flat maximum between eclipses (with a spot bump that pulls
+    a polynomial off), a total eclipse and an asymmetric maximum; drawn by evaluate()."""
+    x = np.linspace(0, 1, 400)
+    dips = lambda t: 40 * (np.exp(-((t / 0.06) ** 2)) + np.exp(-(((t - 1) / 0.06) ** 2)))
+    y = dips(x) - 3 * np.exp(-(((x - 0.3) / 0.1) ** 2)) + rng.normal(0, 0.3, x.size)  # magnitudes
+    sym, poly = logic.fit_extremum(x, y, "sym"), logic.fit_extremum(x, y, "auto")
+    assert sym.kind == "max" and abs(sym.t0 - 0.5) < 0.01 and abs(poly.t0 - 0.5) > 0.1, (sym.t0, poly.t0)
+    assert abs(np.sum((y - logic.evaluate(sym, x)) ** 2) - sym.sse) < 1e-6 * sym.sse  # drawn as fitted
+    x = T[(T > 1.4) & (T < 1.6)]
+    wsl = logic.fit_extremum(x, logic.wsl_model(x, 40, -900, 1.5, 0.02) + rng.normal(0, 2, x.size), "wsl")
+    assert wsl.kind == "min" and abs(wsl.t0 - 1.5) < 3 * wsl.sigma_t0 < 6 / 1440, wsl
+    assert abs(wsl.coefficients[3] - 0.02) < 4e-3 and wsl.x_range[0] > 1.41 and wsl.x_range[1] < 1.59, wsl  # the core
+    x = T[(T > 1.35) & (T < 1.65)]
+    ap = logic.fit_extremum(x, logic.apar_model(x, 0, 30000, 1.5, 0.03, 0.08) + rng.normal(0, 2, x.size), "apar")
+    assert ap.kind == "max" and abs(ap.t0 - 1.5) < 3 * ap.sigma_t0 < 3 / 1440, ap
+    s, e = int(np.searchsorted(T, 1.4)), int(np.searchsorted(T, 1.6))
+    res = logic.approximate_all(T, logic.wsl_model(T, 40, -900, 1.5, 0.02), [Interval(s, e, "min")], "wsl")
+    assert res[0].method == "wsl" and abs(res[0].t0 - 1.5) < 1e-5, res
 
 
 if __name__ == "__main__":
