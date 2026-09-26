@@ -124,7 +124,8 @@ class PlotWidget(QWidget):
         x_zoom = max(float(x_zoom), 1e-6)
         y_zoom = max(float(y_zoom), 1e-6)
         width = max(default_w / x_zoom, 1e-9)
-        height = max(default_h / y_zoom, 1e-9)
+        # default_h < 0: magnitudes grow downwards; keep the sign, or the y range collapses to 1e-9
+        height = float(np.copysign(max(abs(default_h) / y_zoom, 1e-9), default_h))
         self.view.camera.rect = (center_x - width / 2.0, center_y - height / 2.0, width, height)
         self.canvas.update()
 
