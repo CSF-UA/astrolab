@@ -103,8 +103,27 @@ class ApproximationWindow(QMainWindow):
         settings_box = QGroupBox("Approximation settings", self)
         settings_layout = QVBoxLayout(settings_box)
         self.method_combo = QComboBox()
-        self.method_combo.addItems(["Polynomial", "Exponential", "Brat+"])
+        self.method_combo.addItems(["Auto", "Polynomial", "Exponential", "Brat+", "Symmetric polynomial",
+                                    "Wall-supported line", "Asymptotic parabola"])
+        self.method_combo.setToolTip(
+            "Auto: brightness minima with Brat+ and a linear baseline on the interval with wings,\n"
+            "maxima (and minima where that fit fails) with a polynomial of BIC order.\n"
+            "Near-extremum functions of MAVKA (Andrych & Andronov 2019), best on the interval itself:\n"
+            "Symmetric polynomial: even powers of (t - t0), for symmetric extrema, flat maxima between eclipses too;\n"
+            "Wall-supported line: flat bottom and steep walls, for total eclipses;\n"
+            "Asymptotic parabola: a parabola continued by straight lines, for asymmetric maxima of pulsating stars")
         settings_layout.addWidget(self.method_combo)
+
+        wings_row = QHBoxLayout()
+        wings_row.addWidget(QLabel("Wings, % of interval:"))
+        self.wings_spin = QSpinBox()
+        self.wings_spin.setRange(0, 200)
+        self.wings_spin.setSingleStep(10)
+        self.wings_spin.setSuffix(" %")
+        self.wings_spin.setToolTip("Widen each interval by this share of its width on each side before fitting.\n"
+                                   "Use ~50 % with Brat+ for eclipses: the model then sees the flat baseline.")
+        wings_row.addWidget(self.wings_spin)
+        settings_layout.addLayout(wings_row)
 
         self.poly_settings = QWidget()
         poly_layout = QHBoxLayout(self.poly_settings)
@@ -191,7 +210,7 @@ class ApproximationWindow(QMainWindow):
         self.brat_d_val.setEnabled(False)
 
         self.brat_gamma_val = QDoubleSpinBox()
-        self.brat_gamma_val.setRange(1e-6, 100)
+        self.brat_gamma_val.setRange(1e-6, 10)  # the fit bounds gamma to 10
         self.brat_gamma_val.setValue(1.0)
 
         brat_layout.addRow(self.brat_c0_auto, self.brat_c0_val)
@@ -287,6 +306,7 @@ class ApproximationWindow(QMainWindow):
         self.load_lc_btn.clicked.connect(self._load_light_curve)
         self.load_iv_btn.clicked.connect(self._load_intervals)
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
+        self._on_method_changed(self.method_combo.currentIndex())
         self.order_auto_btn.toggled.connect(self._toggle_order_mode)
         self.exp_a_auto.toggled.connect(lambda c: self.exp_a_val.setEnabled(not c))
         self.exp_c_auto.toggled.connect(lambda c: self.exp_c_val.setEnabled(not c))
@@ -316,9 +336,14 @@ class ApproximationWindow(QMainWindow):
         self.order_spinner.setEnabled(not checked)
 
     def _on_method_changed(self, index: int) -> None:
-        self.poly_settings.setVisible(index == 0)
-        self.exp_settings.setVisible(index == 1)
-        self.brat_settings.setVisible(index == 2)
+        self.poly_settings.setVisible(index == 1)
+        self.exp_settings.setVisible(index == 2)
+        self.brat_settings.setVisible(index == 3)
+        # the eclipse profile needs the baseline around the eclipse; a polynomial is best on the interval itself
+        eclipse = index in (0, 3)
+        if eclipse != getattr(self, "_eclipse_method", None):  # keep the user's wings within a group
+            self.wings_spin.setValue(50 if eclipse else 0)
+        self._eclipse_method = eclipse
 
     @staticmethod
     def _zoom_slider_to_value(slider_value: int) -> float:
@@ -385,7 +410,9 @@ class ApproximationWindow(QMainWindow):
 
     def _current_order_choice(self) -> Union[int, str, dict]:
         idx = self.method_combo.currentIndex()
-        if idx == 1:
+        if idx == 0:
+            return {"method": "auto"}
+        if idx == 2:
             params = logic.ExpParams(
                 a=None if self.exp_a_auto.isChecked() else float(self.exp_a_val.value()),
                 b=float(self.exp_b_val.value()),
@@ -395,7 +422,9 @@ class ApproximationWindow(QMainWindow):
             )
             return {"method": "exponential", "params": params}
         
-        if idx == 2:
+        if idx >= 4:
+            return {"method": ("sym", "wsl", "apar")[idx - 4]}
+        if idx == 3:
             params = logic.BratParams(
                 c0=None if self.brat_c0_auto.isChecked() else float(self.brat_c0_val.value()),
                 c1=None if self.brat_c1_auto.isChecked() else float(self.brat_c1_val.value()),
@@ -470,14 +499,17 @@ class ApproximationWindow(QMainWindow):
     def _run_approximation(self) -> None:
         if not self._ensure_inputs():
             return
-        try:
-            self.results = logic.approximate_all(self.times, self.mags, self.intervals, self._current_order_choice())
-        except Exception as exc:
-            QMessageBox.critical(self, "Approximation failed", str(exc))
-            return
+        errors: dict = {}
+        self.results = logic.approximate_all(
+            self.times, self.mags, self.intervals, self._current_order_choice(), self.wings_spin.value() / 100, errors
+        )
         self._refresh_results_table()
         self.plot.set_results(self.results)
-        self.status_label.setText("Approximation finished. Review results below.")
+        msg = f"Approximation finished: {len(self.results)} of {len(self.intervals)} intervals fitted."
+        if errors:
+            first = min(errors)
+            msg += f" Failed: {', '.join(str(i + 1) for i in sorted(errors))} (#{first + 1}: {errors[first]})"
+        self.status_label.setText(msg if errors else msg + " Review results below.")
 
     def _refresh_results_table(self) -> None:
         rows = logic.results_to_table_rows(self.results)
@@ -502,11 +534,13 @@ class ApproximationWindow(QMainWindow):
             QMessageBox.information(self, "No selection", "Select a row in the results table.")
             return
         try:
-            updated = logic.recompute_result(self.times, self.mags, target, self._current_order_choice())
+            updated = logic.recompute_result(
+                self.times, self.mags, target, self._current_order_choice(), self.wings_spin.value() / 100
+            )
         except Exception as exc:
             QMessageBox.critical(self, "Re-approx failed", str(exc))
             return
-        self.results[target.index] = updated
+        self.results[self.table.currentRow()] = updated
         self._refresh_results_table()
         self.plot.set_results(self.results)
         self.status_label.setText(f"Recomputed interval {target.index + 1}.")
@@ -516,9 +550,7 @@ class ApproximationWindow(QMainWindow):
         if target is None:
             QMessageBox.information(self, "No selection", "Select a row to delete.")
             return
-        del self.results[target.index]
-        for idx, res in enumerate(self.results):
-            res.index = idx
+        del self.results[self.table.currentRow()]  # rows keep their interval numbers
         self._refresh_results_table()
         self.plot.set_results(self.results)
         self.plot.highlight_interval(self.times if self.times is not None else None, self.mags if self.mags is not None else None, None)
