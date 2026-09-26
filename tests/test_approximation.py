@@ -136,6 +136,23 @@ def test_a_fit_of_the_other_kind_is_a_failure():
     assert res == [] and "brightness max" in errors[0], (res, errors)  # the file says minimum, the data a maximum
 
 
+def test_sigma_t0_matches_the_scatter_of_t0():
+    """The fit's error of t0 agrees with the scatter of t0 over noise realisations (white noise)."""
+    x = T[(T > 1.3) & (T < 1.7)]
+    hump = lambda t: -40 * np.exp(-(((t - 1.5) / 0.15) ** 2))  # a brightness maximum, in magnitudes
+    cases = {
+        "brat": (lambda: eclipse(x), {"method": "brat", "slope": True, "dip": True}),
+        "poly": (lambda: hump(x) + rng.normal(0, 2, x.size), "auto"),
+    }
+    for name, (data, choice) in cases.items():
+        fits = [logic.fit_extremum(x, data(), choice) for _ in range(60)]
+        t0 = np.array([f.t0 for f in fits])
+        sigma = np.array([f.sigma_t0 for f in fits])
+        assert np.isfinite(sigma).all() and (sigma > 0).all(), name
+        ratio = np.median(sigma) / np.std(t0)
+        assert 0.6 < ratio < 1.6, (name, ratio, np.median(sigma), np.std(t0))
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -32,6 +32,7 @@ class FitResult:
     y_at_t0: float
     method: str = "poly"
     wings: float = 0.0
+    sigma_t0: float = float("nan")  # 1-sigma error of t0 from the fit (inf when t0 is not a turning point)
 
 
 @dataclass
@@ -165,8 +166,9 @@ def brat_model(x, c0, c1, t0, d, gamma, c2=0.0):
 
 def _fit_brat(
     x: np.ndarray, y: np.ndarray, params: BratParams | None = None, slope: bool = False, dip: bool = False
-) -> Tuple[np.ndarray, float]:
-    """dip: a brightness minimum (magnitude peak) is wanted, so start there and keep c1 <= 0."""
+) -> Tuple[np.ndarray, float, np.ndarray]:
+    """dip: a brightness minimum (magnitude peak) is wanted, so start there and keep c1 <= 0.
+    Returns the parameters, the SSE and their covariance."""
     # Initial guesses from the data: the model equals c0 at t0 and c0 + c1 far from it, so start from the
     # point farthest from the median (the eclipse bottom, for magnitudes or flux alike) with the matching sign of c1
     base = float(np.median(y))
@@ -188,18 +190,18 @@ def _fit_brat(
         (np.inf, 0.0 if dip else np.inf, np.inf, np.inf, 10.0),  # Limit gamma to avoid extreme values
     )
     
-    popt, _ = curve_fit(brat_model, x, y, p0=p0, bounds=bounds)
+    popt, pcov = curve_fit(brat_model, x, y, p0=p0, bounds=bounds)
     if slope:  # then free the linear baseline, starting from the flat one
         bounds = (bounds[0] + (-np.inf,), bounds[1] + (np.inf,))
-        popt, _ = curve_fit(brat_model, x, y, p0=[*popt, 0.0], bounds=bounds, maxfev=5000)
+        popt, pcov = curve_fit(brat_model, x, y, p0=[*popt, 0.0], bounds=bounds, maxfev=5000)
     y_fit = brat_model(x, *popt)
     sse = float(np.sum((y - y_fit) ** 2))
-    return popt, sse
+    return popt, sse, pcov
 
 
 def _fit_exponential(
     x: np.ndarray, y: np.ndarray, params: ExpParams | None = None
-) -> Tuple[np.ndarray, float]:
+) -> Tuple[np.ndarray, float, np.ndarray]:
     a_init = params.a if params and params.a is not None else float(np.max(y) - np.min(y))
     b_init = params.b if params and params.b is not None else 2.0
     c_init = params.c if params and params.c is not None else float(np.average(x))
@@ -211,10 +213,32 @@ def _fit_exponential(
         (1e-9, 1e-9, -np.inf, 1e-9, -np.inf),  # Slightly above zero for A, B, D
         (np.inf, np.inf, np.inf, np.inf, np.inf),
     )
-    popt, _ = curve_fit(exponential_model, x, y, p0=p0, bounds=bounds)
+    popt, pcov = curve_fit(exponential_model, x, y, p0=p0, bounds=bounds)
     y_fit = exponential_model(x, *popt)
     sse = float(np.sum((y - y_fit) ** 2))
-    return popt, sse
+    return popt, sse, pcov
+
+
+def _sigma(pcov: np.ndarray, i: int) -> float:
+    """1-sigma error of parameter i from curve_fit's covariance (scaled by the residuals)."""
+    v = float(pcov[i, i]) if pcov is not None else float("nan")
+    return float(np.sqrt(v)) if np.isfinite(v) and v >= 0 else float("inf")
+
+
+def _poly_sigma_t0(x: np.ndarray, y: np.ndarray, coeffs: np.ndarray, t: float) -> float:
+    """Error of the turning point t of the polynomial fit: p'(t) = 0, so dt/dc = -(dp'/dc) / p''(t),
+    propagated through the covariance of the coefficients (scaled by the residuals)."""
+    n = coeffs.size - 1
+    try:
+        _, cov = np.polyfit(x, y, n, cov=True)
+    except (ValueError, np.linalg.LinAlgError):  # too few points for the residual variance
+        return float("inf")
+    curvature = np.polyval(np.polyder(coeffs, 2), t) if n >= 2 else 0.0
+    if curvature == 0:
+        return float("inf")
+    grad = -np.array([(n - j) * t ** (n - j - 1) if j < n else 0.0 for j in range(n + 1)]) / curvature
+    v = float(grad @ cov @ grad)
+    return float(np.sqrt(v)) if np.isfinite(v) and v >= 0 else float("inf")
 
 
 def fit_extremum(
@@ -246,7 +270,7 @@ def fit_extremum(
             brat_params = method_choice.get("params")
 
     if is_exp:
-        popt, sse = _fit_exponential(times, mags, params=exp_params)
+        popt, sse, pcov = _fit_exponential(times, mags, params=exp_params)
         t0 = float(popt[2])
         y_at_t0 = float(popt[0] + popt[4])  # A + F
         kind = "min"  # A > 0: a magnitude peak, i.e. a brightness minimum
@@ -261,11 +285,14 @@ def fit_extremum(
             sse=sse,
             y_at_t0=y_at_t0,
             method="exp",
+            sigma_t0=_sigma(pcov, 2),
         )
     
     if is_brat:
         opts = method_choice if isinstance(method_choice, dict) else {}
-        popt, sse = _fit_brat(times, mags, params=brat_params, slope=opts.get("slope", False), dip=opts.get("dip", False))
+        popt, sse, pcov = _fit_brat(
+            times, mags, params=brat_params, slope=opts.get("slope", False), dip=opts.get("dip", False)
+        )
         t0 = float(popt[2])
         y_at_t0 = float(popt[0])  # psi(t0) = 0, so the model at t0 is c0
         kind = "min" if popt[1] < 0 else "max"  # c1 < 0: a magnitude peak at t0, i.e. a brightness minimum
@@ -280,6 +307,7 @@ def fit_extremum(
             sse=sse,
             y_at_t0=y_at_t0,
             method="brat",
+            sigma_t0=_sigma(pcov, 2),
         )
 
     # Polynomial path
@@ -307,6 +335,7 @@ def fit_extremum(
         kind = "min"
         y_at_t0 = float(dense_y[idx_max])
     t0 = float(t0_centered + x_mean)
+    turning = 0 < (idx_min if kind == "max" else idx_max) < dense_x.size - 1
     return FitResult(
         index=-1,
         interval=Interval(start=0, end=0),
@@ -318,6 +347,7 @@ def fit_extremum(
         sse=sse,
         y_at_t0=y_at_t0,
         method="poly",
+        sigma_t0=_poly_sigma_t0(centered_x, mags, coeffs, t0_centered) if turning else float("inf"),
     )
 
 
