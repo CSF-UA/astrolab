@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 if __package__ is None or __package__ == "":
@@ -15,7 +16,10 @@ from apps.period.ui import PeriodWindow
 def main() -> None:
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    app.setPalette(app.style().standardPalette())  # light, as the white plot, also under a dark system theme
+    # light like the white plots, also under a dark system theme (Ubuntu): Fusion's palette
+    # follows the system colour scheme unless the app asks for the light one
+    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+    app.setPalette(app.style().standardPalette())
     app.setApplicationName("Astrolab Period Calculator")
     window = PeriodWindow()
     window.show()
