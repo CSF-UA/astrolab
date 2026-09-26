@@ -16,6 +16,8 @@ from apps.approximation.ui import ApproximationWindow
 def main() -> None:
     vispy_app.use_app("pyside6")
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    app.setPalette(app.style().standardPalette())  # light, as the white plot, also under a dark system theme
     app.setApplicationName("Astrolab Approximation")
     window = ApproximationWindow()
     window.show()
